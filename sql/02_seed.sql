@@ -1,25 +1,5 @@
--- Seed data for Steam Store & Gaming Platform (steam_db)
-USE steam_db;
+-- Demo seed data (PostgreSQL). Loaded by scripts/init_db.py only when USERS is empty.
 
-SET FOREIGN_KEY_CHECKS = 0;
-TRUNCATE TABLE GAME_TAGS;
-TRUNCATE TABLE TAGS;
-TRUNCATE TABLE USER_ACHIEVEMENTS;
-TRUNCATE TABLE ACHIEVEMENTS;
-TRUNCATE TABLE SALE_ITEMS;
-TRUNCATE TABLE SALES;
-TRUNCATE TABLE WISHLIST;
-TRUNCATE TABLE REVIEWS;
-TRUNCATE TABLE USER_LIBRARY;
-TRUNCATE TABLE ORDER_ITEMS;
-TRUNCATE TABLE WALLET_TRANSACTIONS;
-TRUNCATE TABLE ORDERS;
-TRUNCATE TABLE FRIENDSHIPS;
-TRUNCATE TABLE USERS;
-TRUNCATE TABLE GAMES;
-TRUNCATE TABLE DEVELOPERS;
-TRUNCATE TABLE PUBLISHERS;
-SET FOREIGN_KEY_CHECKS = 1;
 
 -- 1. PUBLISHERS
 INSERT INTO PUBLISHERS (publisher_id, name, country, founded_year, website) VALUES
@@ -230,15 +210,17 @@ INSERT INTO GAME_TAGS (game_id, tag_id) VALUES
 (11, 3), (11, 10),
 (12, 1), (12, 4), (12, 9);
 
--- Reset auto_increment counters cleanly
-ALTER TABLE PUBLISHERS AUTO_INCREMENT = 8;
-ALTER TABLE DEVELOPERS AUTO_INCREMENT = 9;
-ALTER TABLE GAMES AUTO_INCREMENT = 13;
-ALTER TABLE USERS AUTO_INCREMENT = 7;
-ALTER TABLE ORDERS AUTO_INCREMENT = 8;
-ALTER TABLE WALLET_TRANSACTIONS AUTO_INCREMENT = 12;
-ALTER TABLE ORDER_ITEMS AUTO_INCREMENT = 12;
-ALTER TABLE REVIEWS AUTO_INCREMENT = 10;
-ALTER TABLE SALES AUTO_INCREMENT = 4;
-ALTER TABLE ACHIEVEMENTS AUTO_INCREMENT = 13;
-ALTER TABLE TAGS AUTO_INCREMENT = 11;
+
+
+-- Re-sync identity sequences after explicit-ID inserts
+SELECT setval(pg_get_serial_sequence('publishers','publisher_id'), (SELECT COALESCE(MAX(publisher_id),0)+1 FROM publishers), false);
+SELECT setval(pg_get_serial_sequence('developers','developer_id'), (SELECT COALESCE(MAX(developer_id),0)+1 FROM developers), false);
+SELECT setval(pg_get_serial_sequence('games','game_id'), (SELECT COALESCE(MAX(game_id),0)+1 FROM games), false);
+SELECT setval(pg_get_serial_sequence('users','user_id'), (SELECT COALESCE(MAX(user_id),0)+1 FROM users), false);
+SELECT setval(pg_get_serial_sequence('orders','order_id'), (SELECT COALESCE(MAX(order_id),0)+1 FROM orders), false);
+SELECT setval(pg_get_serial_sequence('wallet_transactions','txn_id'), (SELECT COALESCE(MAX(txn_id),0)+1 FROM wallet_transactions), false);
+SELECT setval(pg_get_serial_sequence('order_items','order_item_id'), (SELECT COALESCE(MAX(order_item_id),0)+1 FROM order_items), false);
+SELECT setval(pg_get_serial_sequence('reviews','review_id'), (SELECT COALESCE(MAX(review_id),0)+1 FROM reviews), false);
+SELECT setval(pg_get_serial_sequence('sales','sale_id'), (SELECT COALESCE(MAX(sale_id),0)+1 FROM sales), false);
+SELECT setval(pg_get_serial_sequence('achievements','achievement_id'), (SELECT COALESCE(MAX(achievement_id),0)+1 FROM achievements), false);
+SELECT setval(pg_get_serial_sequence('tags','tag_id'), (SELECT COALESCE(MAX(tag_id),0)+1 FROM tags), false);
