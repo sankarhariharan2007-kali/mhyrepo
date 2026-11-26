@@ -16,6 +16,13 @@ DB_CONFIG = {
     "autocommit": False,
 }
 
+# Managed MySQL providers usually require TLS. Set MYSQL_SSL=1 (system CAs) or
+# MYSQL_SSL_CA=/path/to/ca.pem.
+if os.environ.get("MYSQL_SSL_CA"):
+    DB_CONFIG["ssl"] = {"ca": os.environ["MYSQL_SSL_CA"]}
+elif os.environ.get("MYSQL_SSL") == "1":
+    DB_CONFIG["ssl"] = {}
+
 SOCKET_PATH = os.environ.get(
     "MYSQL_UNIX_SOCKET",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "mysql_data", "mysql.sock"),

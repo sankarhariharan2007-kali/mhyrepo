@@ -10,6 +10,17 @@ from db import get_connection, serialize_row, serialize_rows
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FERRO_SECRET_KEY", "ferro-y-session-secret-2026")
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=os.environ.get("FERRO_COOKIE_SECURE") == "1",
+)
+
+# Member IDs allowed to use catalog-admin endpoints and the SQL explorer.
+ADMIN_USER_IDS = {
+    int(x) for x in os.environ.get("ADMIN_USER_IDS", "1").split(",") if x.strip().isdigit()
+}
+ENABLE_SQL_EXPLORER = os.environ.get("ENABLE_SQL_EXPLORER", "1") == "1"
 
 ALLOWED_TABLES = {
     "publishers",
@@ -60,6 +71,15 @@ def _require_auth(expected_user_id=None):
     return int(uid), None
 
 
+def _require_admin():
+    uid, err = _require_auth()
+    if err:
+        return None, err
+    if uid not in ADMIN_USER_IDS:
+        return None, _error("Admin access required.", 403)
+    return uid, None
+
+
 def _compute_effective_price(base_price, discount_pct):
     base = Decimal(str(base_price))
     if not discount_pct:
@@ -84,6 +104,14 @@ def handle_mysql_error(err):
     code = err.args[0] if err.args else 500
     msg = err.args[1] if len(err.args) > 1 else str(err)
     return jsonify({"error": f"Database error ({code}): {msg}"}), 400
+
+
+@app.route("/healthz")
+def healthz():
+    with db_cursor() as (_, cur):
+        cur.execute("SELECT 1 AS ok")
+        cur.fetchone()
+    return jsonify({"status": "ok"})
 
 
 @app.route("/")
@@ -392,6 +420,9 @@ def get_game_detail(game_id):
 
 @app.route("/api/games", methods=["POST"])
 def create_game():
+    _, err = _require_admin()
+    if err:
+        return err
     data = request.get_json(force=True) or {}
     title = (data.get("title") or "").strip()
     if not title:
@@ -429,6 +460,9 @@ def create_game():
 
 @app.route("/api/games/<int:game_id>", methods=["DELETE"])
 def delete_game(game_id):
+    _, err = _require_admin()
+    if err:
+        return err
     with db_cursor(commit=True) as (_, cur):
         cur.execute("DELETE FROM GAMES WHERE game_id = %s", (game_id,))
         if cur.rowcount == 0:
@@ -921,6 +955,9 @@ def get_meta():
 
 @app.route("/api/publishers", methods=["POST"])
 def create_publisher():
+    _, err = _require_admin()
+    if err:
+        return err
     data = request.get_json(force=True) or {}
     name = (data.get("name") or "").strip()
     if not name:
@@ -935,6 +972,9 @@ def create_publisher():
 
 @app.route("/api/developers", methods=["POST"])
 def create_developer():
+    _, err = _require_admin()
+    if err:
+        return err
     data = request.get_json(force=True) or {}
     name = (data.get("name") or "").strip()
     if not name:
@@ -949,6 +989,9 @@ def create_developer():
 
 @app.route("/api/tags", methods=["POST"])
 def create_tag():
+    _, err = _require_admin()
+    if err:
+        return err
     data = request.get_json(force=True) or {}
     name = (data.get("name") or "").strip()
     if not name:
@@ -963,6 +1006,9 @@ def create_tag():
 
 @app.route("/api/sales", methods=["POST"])
 def create_sale():
+    _, err = _require_admin()
+    if err:
+        return err
     data = request.get_json(force=True) or {}
     title = (data.get("title") or "").strip()
     start_date = data.get("start_date")
@@ -979,6 +1025,9 @@ def create_sale():
 
 @app.route("/api/sales/<int:sale_id>/items", methods=["POST"])
 def add_sale_item(sale_id):
+    _, err = _require_admin()
+    if err:
+        return err
     data = request.get_json(force=True) or {}
     game_id = data.get("game_id")
     discount_pct = int(data.get("discount_pct") or 0)
@@ -997,6 +1046,9 @@ def add_sale_item(sale_id):
 
 @app.route("/api/achievements", methods=["POST"])
 def create_achievement():
+    _, err = _require_admin()
+    if err:
+        return err
     data = request.get_json(force=True) or {}
     game_id = data.get("game_id")
     name = (data.get("name") or "").strip()
@@ -1018,15 +1070,15 @@ def list_db_tables():
     with db_cursor() as (_, cur):
         tables = []
         for tbl in sorted(ALLOWED_TABLES):
-            cur.execute(f"SELECT COUNT(*) AS cnt FROM `{tbl}`")
+            cur.execute(f"SELECT COUNT(*) AS cnt FROM `{tbl.upper()}`")
             cnt = cur.fetchone()["cnt"]
             cur.execute(
                 "SELECT COLUMN_NAME AS column_name, COLUMN_TYPE AS column_type, "
                 "COLUMN_KEY AS column_key, IS_NULLABLE AS is_nullable "
                 "FROM information_schema.columns "
-                "WHERE table_schema = DATABASE() AND table_name = %s "
+                "WHERE table_schema = DATABASE() AND UPPER(table_name) = %s "
                 "ORDER BY ordinal_position",
-                (tbl,),
+                (tbl.upper(),),
             )
             cols = serialize_rows(cur.fetchall())
             tables.append({"table_name": tbl.upper(), "row_count": int(cnt), "columns": cols})
@@ -1040,7 +1092,7 @@ def inspect_table(table_name):
         return _error("Unknown table name.", 404)
     limit = min(int(request.args.get("limit", 100)), 500)
     with db_cursor() as (_, cur):
-        cur.execute(f"SELECT * FROM `{tbl}` LIMIT %s", (limit,))
+        cur.execute(f"SELECT * FROM `{tbl.upper()}` LIMIT %s", (limit,))
         rows = serialize_rows(cur.fetchall())
         if tbl == "users":
             for r in rows:
@@ -1052,6 +1104,11 @@ def inspect_table(table_name):
 
 @app.route("/api/db/query", methods=["POST"])
 def run_readonly_query():
+    if not ENABLE_SQL_EXPLORER:
+        return _error("SQL Explorer is disabled on this deployment.", 403)
+    _, err = _require_admin()
+    if err:
+        return err
     data = request.get_json(force=True) or {}
     sql = (data.get("sql") or "").strip()
     if not sql:
@@ -1060,7 +1117,9 @@ def run_readonly_query():
     first_kw = stripped.split(None, 1)[0].upper() if stripped else ""
     if first_kw not in ("SELECT", "SHOW", "DESCRIBE", "DESC", "EXPLAIN", "WITH"):
         return _error("SQL Explorer only allows read-only queries (SELECT, SHOW, DESCRIBE, EXPLAIN, WITH).")
-    if ";" in stripped[:-1]:
+    if re.search(r"password_hash|into\s+(outfile|dumpfile)|load_file", stripped, re.I):
+        return _error("This query touches restricted data.", 403)
+    if ";" in stripped.rstrip().rstrip(";"):
         return _error("Only a single SQL statement is allowed per query.")
 
     with db_cursor() as (_, cur):

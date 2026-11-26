@@ -35,3 +35,12 @@ Defined in [`sql/01_schema.sql`](sql/01_schema.sql) and seeded in [`sql/02_seed.
    ```
    Open `http://127.0.0.1:5050` in your browser.
    Demo Member IDs: `1`–`6` · Password: `password123`.
+
+## Deploying to Render
+
+1. Push this repo to GitHub, then in Render choose **New → Blueprint** and select it (`render.yaml`).
+2. Enter `MYSQL_PASSWORD` (same value on both services) and `MYSQL_ROOT_PASSWORD` when prompted.
+3. On boot, `scripts/init_db.py` creates the 17 tables and loads demo data only if `USERS` is empty (safe on redeploys).
+4. Log in with Member ID `1` / `password123`, then **change or remove the demo accounts**.
+
+Environment variables: `FERRO_SECRET_KEY`, `FERRO_COOKIE_SECURE`, `ADMIN_USER_IDS` (default `1`; only these members can use catalog-admin endpoints and the SQL explorer), `ENABLE_SQL_EXPLORER`, `SEED_DEMO_DATA`, `MYSQL_HOST/PORT/USER/PASSWORD/DB`, `MYSQL_SSL=1` or `MYSQL_SSL_CA` for managed MySQL.
