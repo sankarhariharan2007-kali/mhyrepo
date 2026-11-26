@@ -19,7 +19,32 @@ TRUNCATE TABLE USERS;
 TRUNCATE TABLE GAMES;
 TRUNCATE TABLE DEVELOPERS;
 TRUNCATE TABLE PUBLISHERS;
+TRUNCATE TABLE REGIONS;
+TRUNCATE TABLE CURRENCIES;
 SET FOREIGN_KEY_CHECKS = 1;
+
+-- 0a. CURRENCIES (Base canonical currency: INR)
+INSERT INTO CURRENCIES (currency_code, name, symbol, minor_units, rate_from_inr) VALUES
+('INR', 'Indian Rupee', '₹', 2, 1.000000),
+('USD', 'US Dollar', '$', 2, 0.011800),
+('JPY', 'Japanese Yen', '¥', 0, 1.820000),
+('GBP', 'British Pound', '£', 2, 0.009300),
+('PLN', 'Polish Złoty', 'zł', 2, 0.048000),
+('CAD', 'Canadian Dollar', 'CA$', 2, 0.016500),
+('AUD', 'Australian Dollar', 'A$', 2, 0.018100),
+('EUR', 'Euro', '€', 2, 0.011200);
+
+-- 0b. REGIONS
+INSERT INTO REGIONS (region_id, country_name, country_code, currency_code) VALUES
+(1, 'India', 'IN', 'INR'),
+(2, 'USA', 'US', 'USD'),
+(3, 'Japan', 'JP', 'JPY'),
+(4, 'UK', 'GB', 'GBP'),
+(5, 'Poland', 'PL', 'PLN'),
+(6, 'Canada', 'CA', 'CAD'),
+(7, 'Australia', 'AU', 'AUD'),
+(8, 'Germany', 'DE', 'EUR'),
+(9, 'France', 'FR', 'EUR');
 
 -- 1. PUBLISHERS
 INSERT INTO PUBLISHERS (publisher_id, name, country, founded_year, website) VALUES
@@ -59,16 +84,19 @@ INSERT INTO GAMES (game_id, title, description, release_date, base_price, publis
 
 -- 4. USERS & PUBLISHERS (default seeded password for all demo accounts: password123)
 INSERT INTO USERS (user_id, username, email, password_hash, role, publisher_id, wallet_balance, country, created_at) VALUES
-(1, 'arjun_dev', 'arjun@sauna.io', 'scrypt:32768:8:1$6GOOMpmt2bBr3BM0$f5b262259419bcf308acf497fb17d7c4a2c9fe292aa3aac8edd8bfc82c9eac12b191b6e043621297298f22e47021fbff86d62819d2227e3215b42554bbcafaa2', 'user', NULL, 5801.00, 'India', '2023-01-15 10:22:00'),
+(1, 'arjun_dev', 'arjun@sauna.io', 'scrypt:32768:8:1$6GOOMpmt2bBr3BM0$f5b262259419bcf308acf497fb17d7c4a2c9fe292aa3aac8edd8bfc82c9eac12b191b6e043621297298f22e47021fbff86d62819d2227e3215b42554bbcafaa2', 'user', NULL, 6021.60, 'India', '2023-01-15 10:22:00'),
 (2, 'elena_vance', 'elena@sauna.io', 'scrypt:32768:8:1$6GOOMpmt2bBr3BM0$f5b262259419bcf308acf497fb17d7c4a2c9fe292aa3aac8edd8bfc82c9eac12b191b6e043621297298f22e47021fbff86d62819d2227e3215b42554bbcafaa2', 'user', NULL, 4500.00, 'USA', '2022-06-03 14:10:00'),
 (3, 'kenji_k', 'kenji@sauna.io', 'scrypt:32768:8:1$6GOOMpmt2bBr3BM0$f5b262259419bcf308acf497fb17d7c4a2c9fe292aa3aac8edd8bfc82c9eac12b191b6e043621297298f22e47021fbff86d62819d2227e3215b42554bbcafaa2', 'user', NULL, 9002.00, 'Japan', '2021-11-20 08:45:00'),
 (4, 'marta_r', 'marta@sauna.io', 'scrypt:32768:8:1$6GOOMpmt2bBr3BM0$f5b262259419bcf308acf497fb17d7c4a2c9fe292aa3aac8edd8bfc82c9eac12b191b6e043621297298f22e47021fbff86d62819d2227e3215b42554bbcafaa2', 'user', NULL, 1521.00, 'Poland', '2024-02-11 19:30:00'),
-(5, 'liam_os', 'liam@sauna.io', 'scrypt:32768:8:1$6GOOMpmt2bBr3BM0$f5b262259419bcf308acf497fb17d7c4a2c9fe292aa3aac8edd8bfc82c9eac12b191b6e043621297298f22e47021fbff86d62819d2227e3215b42554bbcafaa2', 'user', NULL, 2500.00, 'UK', '2024-08-09 12:05:00'),
+(5, 'liam_os', 'liam@sauna.io', 'scrypt:32768:8:1$6GOOMpmt2bBr3BM0$f5b262259419bcf308acf497fb17d7c4a2c9fe292aa3aac8edd8bfc82c9eac12b191b6e043621297298f22e47021fbff86d62819d2227e3215b42554bbcafaa2', 'user', NULL, 2020.00, 'UK', '2024-08-09 12:05:00'),
 (6, 'sara_chen', 'sara@sauna.io', 'scrypt:32768:8:1$6GOOMpmt2bBr3BM0$f5b262259419bcf308acf497fb17d7c4a2c9fe292aa3aac8edd8bfc82c9eac12b191b6e043621297298f22e47021fbff86d62819d2227e3215b42554bbcafaa2', 'user', NULL, 5100.80, 'Canada', '2025-01-04 16:40:00'),
 (7, 'valve_pub', 'valve@sauna.io', 'scrypt:32768:8:1$6GOOMpmt2bBr3BM0$f5b262259419bcf308acf497fb17d7c4a2c9fe292aa3aac8edd8bfc82c9eac12b191b6e043621297298f22e47021fbff86d62819d2227e3215b42554bbcafaa2', 'publisher', 1, 0.00, 'USA', '2023-01-01 09:00:00'),
 (8, 'cdpr_pub', 'cdpr@sauna.io', 'scrypt:32768:8:1$6GOOMpmt2bBr3BM0$f5b262259419bcf308acf497fb17d7c4a2c9fe292aa3aac8edd8bfc82c9eac12b191b6e043621297298f22e47021fbff86d62819d2227e3215b42554bbcafaa2', 'publisher', 2, 0.00, 'Poland', '2023-01-01 09:00:00'),
 (9, 'supergiant_pub', 'supergiant@sauna.io', 'scrypt:32768:8:1$6GOOMpmt2bBr3BM0$f5b262259419bcf308acf497fb17d7c4a2c9fe292aa3aac8edd8bfc82c9eac12b191b6e043621297298f22e47021fbff86d62819d2227e3215b42554bbcafaa2', 'publisher', 4, 0.00, 'USA', '2023-01-01 09:00:00'),
 (10, 'admin', 'admin@sauna.io', 'scrypt:32768:8:1$6GOOMpmt2bBr3BM0$f5b262259419bcf308acf497fb17d7c4a2c9fe292aa3aac8edd8bfc82c9eac12b191b6e043621297298f22e47021fbff86d62819d2227e3215b42554bbcafaa2', 'admin', NULL, 0.00, 'India', '2023-01-01 09:00:00');
+UPDATE USERS u
+JOIN REGIONS r ON LOWER(u.country) = LOWER(r.country_name)
+SET u.region_id = r.region_id;
 
 -- 5. FRIENDSHIPS
 INSERT INTO FRIENDSHIPS (user_id, friend_id, status, created_at) VALUES
@@ -88,7 +116,9 @@ INSERT INTO ORDERS (order_id, user_id, total_amount, payment_method, status, cre
 (4, 3, 5998.00, 'SAUNA Wallet', 'completed', '2026-01-19 22:15:00'),
 (5, 4, 1479.00, 'SAUNA Wallet', 'completed', '2026-06-28 16:00:00'),
 (6, 5, 1100.00, 'SAUNA Wallet', 'completed', '2026-10-05 11:30:00'),
-(7, 6, 2399.20, 'SAUNA Wallet', 'completed', '2026-11-22 13:45:00');
+(7, 6, 2399.20, 'SAUNA Wallet', 'completed', '2026-11-22 13:45:00'),
+(8, 1, 779.40, 'SAUNA Wallet', 'completed', DATE_SUB(NOW(), INTERVAL 1 DAY)),
+(9, 5, 480.00, 'SAUNA Wallet', 'completed', DATE_SUB(NOW(), INTERVAL 2 DAY));
 
 -- 7. WALLET_TRANSACTIONS
 INSERT INTO WALLET_TRANSACTIONS (txn_id, user_id, amount, txn_type, reference_order_id, created_at) VALUES
@@ -102,7 +132,10 @@ INSERT INTO WALLET_TRANSACTIONS (txn_id, user_id, amount, txn_type, reference_or
 (8, 4, -1479.00, 'purchase', 5, '2026-06-28 16:00:00'),
 (9, 5, 2500.00, 'deposit', NULL, '2026-09-01 15:00:00'),
 (10, 6, 7500.00, 'deposit', NULL, '2026-11-18 10:00:00'),
-(11, 6, -2399.20, 'purchase', 7, '2026-11-22 13:45:00');
+(11, 6, -2399.20, 'purchase', 7, '2026-11-22 13:45:00'),
+(12, 1, 1000.00, 'deposit', NULL, DATE_SUB(NOW(), INTERVAL 2 DAY)),
+(13, 1, -779.40, 'purchase', 8, DATE_SUB(NOW(), INTERVAL 1 DAY)),
+(14, 5, -480.00, 'purchase', 9, DATE_SUB(NOW(), INTERVAL 2 DAY));
 
 -- 8. ORDER_ITEMS
 INSERT INTO ORDER_ITEMS (order_item_id, order_id, game_id, price_at_purchase) VALUES
@@ -116,7 +149,31 @@ INSERT INTO ORDER_ITEMS (order_item_id, order_id, game_id, price_at_purchase) VA
 (8, 5, 5, 999.00),
 (9, 5, 3, 480.00),
 (10, 6, 7, 1100.00),
-(11, 7, 10, 2399.20);
+(11, 7, 10, 2399.20),
+(12, 8, 12, 779.40),
+(13, 9, 3, 480.00);
+
+-- Populate historical currency snapshots on seeded orders, items, and wallet transactions
+UPDATE ORDERS o
+JOIN USERS u ON u.user_id = o.user_id
+JOIN REGIONS r ON r.region_id = u.region_id
+JOIN CURRENCIES c ON c.currency_code = r.currency_code
+SET o.currency_code = c.currency_code,
+    o.exchange_rate_used = c.rate_from_inr,
+    o.display_total_amount = ROUND(o.total_amount * c.rate_from_inr, c.minor_units);
+
+UPDATE ORDER_ITEMS oi
+JOIN ORDERS o ON o.order_id = oi.order_id
+JOIN CURRENCIES c ON c.currency_code = o.currency_code
+SET oi.display_price_at_purchase = ROUND(oi.price_at_purchase * o.exchange_rate_used, c.minor_units);
+
+UPDATE WALLET_TRANSACTIONS wt
+JOIN USERS u ON u.user_id = wt.user_id
+JOIN REGIONS r ON r.region_id = u.region_id
+JOIN CURRENCIES c ON c.currency_code = r.currency_code
+SET wt.currency_code = c.currency_code,
+    wt.exchange_rate_used = c.rate_from_inr,
+    wt.display_amount = ROUND(wt.amount * c.rate_from_inr, c.minor_units);
 
 -- 9. USER_LIBRARY
 INSERT INTO USER_LIBRARY (user_id, game_id, acquired_at, playtime_minutes, last_played_at) VALUES
@@ -124,6 +181,7 @@ INSERT INTO USER_LIBRARY (user_id, game_id, acquired_at, playtime_minutes, last_
 (1, 6, '2025-11-25 14:20:00', 3140, '2026-11-21 20:00:00'),
 (1, 7, '2025-11-25 14:20:00', 1450, '2026-10-14 19:30:00'),
 (1, 9, '2026-03-12 19:05:00', 980, '2026-11-02 15:10:00'),
+(1, 12, DATE_SUB(NOW(), INTERVAL 1 DAY), 45, DATE_SUB(NOW(), INTERVAL 12 HOUR)),
 (2, 1, '2023-09-29 12:00:00', 1200, '2026-08-19 21:00:00'),
 (2, 2, '2025-07-02 10:40:00', 760, '2026-04-12 17:45:00'),
 (2, 5, '2025-07-02 10:40:00', 5400, '2026-11-18 23:00:00'),
@@ -132,7 +190,9 @@ INSERT INTO USER_LIBRARY (user_id, game_id, acquired_at, playtime_minutes, last_
 (4, 3, '2026-06-28 16:00:00', 510, '2026-07-15 14:00:00'),
 (4, 5, '2026-06-28 16:00:00', 3890, '2026-11-20 18:30:00'),
 (5, 7, '2026-10-05 11:30:00', 640, '2026-11-19 20:45:00'),
+(5, 3, DATE_SUB(NOW(), INTERVAL 2 DAY), 90, DATE_SUB(NOW(), INTERVAL 1 DAY)),
 (6, 10, '2026-11-22 13:45:00', 420, '2026-11-25 21:20:00');
+UPDATE USER_LIBRARY SET playtime_seconds = playtime_minutes * 60;
 
 -- 10. REVIEWS
 INSERT INTO REVIEWS (review_id, user_id, game_id, is_recommended, review_text, playtime_at_review, helpful_votes, created_at) VALUES
@@ -235,13 +295,14 @@ INSERT INTO GAME_TAGS (game_id, tag_id) VALUES
 (12, 1), (12, 4), (12, 9);
 
 -- Reset auto_increment counters cleanly
+ALTER TABLE REGIONS AUTO_INCREMENT = 10;
 ALTER TABLE PUBLISHERS AUTO_INCREMENT = 8;
 ALTER TABLE DEVELOPERS AUTO_INCREMENT = 9;
 ALTER TABLE GAMES AUTO_INCREMENT = 13;
 ALTER TABLE USERS AUTO_INCREMENT = 11;
-ALTER TABLE ORDERS AUTO_INCREMENT = 8;
-ALTER TABLE WALLET_TRANSACTIONS AUTO_INCREMENT = 12;
-ALTER TABLE ORDER_ITEMS AUTO_INCREMENT = 12;
+ALTER TABLE ORDERS AUTO_INCREMENT = 10;
+ALTER TABLE WALLET_TRANSACTIONS AUTO_INCREMENT = 15;
+ALTER TABLE ORDER_ITEMS AUTO_INCREMENT = 14;
 ALTER TABLE REVIEWS AUTO_INCREMENT = 10;
 ALTER TABLE SALES AUTO_INCREMENT = 4;
 ALTER TABLE ACHIEVEMENTS AUTO_INCREMENT = 13;

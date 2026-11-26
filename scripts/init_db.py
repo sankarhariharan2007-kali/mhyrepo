@@ -1,6 +1,6 @@
 """Idempotent PostgreSQL bootstrap for hosted deployments (Render, Neon, ...).
 
-- Creates the 17 tables if missing and applies small upgrades (sql/01_schema.sql).
+- Creates the 19 tables if missing and applies small upgrades (sql/01_schema.sql).
 - Loads demo data (sql/02_seed.sql) ONLY if the users table is empty,
   so redeploys never wipe data. Set SEED_DEMO_DATA=0 to skip seeding.
 - RESET_DEMO_DATA=1 replaces the OLD FERRO Y demo data with the SAUNA demo data.
@@ -14,7 +14,7 @@ sys.path.insert(0, ROOT)
 from db import get_connection  # noqa: E402
 
 TABLES = (
-    "publishers, developers, games, users, friendships, orders, wallet_transactions, "
+    "currencies, regions, publishers, developers, games, users, friendships, orders, wallet_transactions, "
     "order_items, user_library, reviews, wishlist, sales, sale_items, achievements, "
     "user_achievements, tags, game_tags"
 )
@@ -62,6 +62,7 @@ def main():
             elif not empty and has_old_demo_data(cur):
                 if os.environ.get("RESET_DEMO_DATA") == "1":
                     cur.execute(f"TRUNCATE {TABLES} RESTART IDENTITY CASCADE")
+                    run_file(cur, "01_schema.sql")  # re-creates currencies/regions reference rows
                     run_file(cur, "02_seed.sql")
                     print("old demo data replaced with SAUNA demo data")
                 else:
@@ -72,6 +73,7 @@ def main():
             else:
                 print("seed skipped (users exist or SEED_DEMO_DATA=0)")
             apply_holiday_update(cur)
+            run_file(cur, "04_currency_backfill.sql")
         conn.commit()
     finally:
         conn.close()

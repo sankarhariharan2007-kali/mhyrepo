@@ -5,8 +5,22 @@ const state = {
   publisherId: null,
   publisherName: null,
   walletBalance: 0,
-  meta: { publishers: [], developers: [], tags: [], sales: [], sale_items: [] },
+  activeRegion: {
+    region_id: 1,
+    country_name: "India",
+    country_code: "IN",
+    currency_code: "INR",
+    currency_name: "Indian Rupee",
+    symbol: "₹",
+    minor_units: 2,
+    rate_from_inr: 1,
+  },
+  meta: { publishers: [], developers: [], tags: [], sales: [], sale_items: [], currencies: [], regions: [] },
   games: [],
+  library: [],
+  orders: [],
+  pendingRefundGameId: null,
+  playTimerInterval: null,
   spotlightIdx: 0,
   cart: [],
   dbTables: [],
@@ -73,13 +87,142 @@ function esc(val) {
     .replace(/'/g, "&#39;");
 }
 
+function formatCurrencyNumber(displayVal, symbol, minorUnits = 2) {
+  const units = Math.max(0, Number(minorUnits ?? 2));
+  const num = Number(displayVal || 0);
+  const rounded = units === 0 ? Math.round(num) : Number(num.toFixed(units));
+  const formatted = Math.abs(rounded).toLocaleString("en-US", {
+    minimumFractionDigits: units,
+    maximumFractionDigits: units,
+  });
+  return `${rounded < 0 ? "-" : ""}${symbol}${formatted}`;
+}
+
 function money(val) {
   const num = Number(val || 0);
-  return num === 0 ? "Free" : `₹${num.toFixed(2)}`;
+  if (num === 0) return "Free";
+  return moneyExact(num);
 }
 
 function moneyExact(val) {
-  return `₹${Number(val || 0).toFixed(2)}`;
+  const reg = state.activeRegion || { symbol: "₹", minor_units: 2, rate_from_inr: 1 };
+  const converted = Number(val || 0) * Number(reg.rate_from_inr || 1);
+  return formatCurrencyNumber(converted, reg.symbol || "₹", reg.minor_units ?? 2);
+}
+
+function moneyRecorded(displayVal, fallbackInrVal, symbol, minorUnits) {
+  const hasDisplay = displayVal !== null && displayVal !== undefined && Number(displayVal) !== 0;
+  if (hasDisplay || Number(fallbackInrVal || 0) === 0) {
+    return formatCurrencyNumber(displayVal || 0, symbol || "₹", minorUnits ?? 2);
+  }
+  return moneyExact(fallbackInrVal);
+}
+
+function updateRegionUI() {
+  const reg = state.activeRegion || { country_code: "IN", country_name: "India", symbol: "₹", currency_code: "INR", minor_units: 2 };
+  const codeEl = document.getElementById("activeCountryCode");
+  const labelEl = document.getElementById("activeRegionLabel");
+  if (codeEl) codeEl.textContent = reg.country_code || "IN";
+  if (labelEl) labelEl.textContent = `${reg.country_name} · ${reg.symbol} ${reg.currency_code}`;
+
+  const depInput = document.getElementById("depositAmount");
+  if (depInput) {
+    const isZeroMinor = Number(reg.minor_units ?? 2) === 0;
+    depInput.step = isZeroMinor ? "1" : "0.01";
+    depInput.min = isZeroMinor ? "1" : "0.01";
+    depInput.placeholder = `Amount in ${reg.symbol} ${reg.currency_code} (e.g. ${isZeroMinor ? "2000" : "1000.00"})`;
+  }
+  const cartEmpty = document.getElementById("cartTotalValue");
+  if (cartEmpty && !state.cart.length) {
+    cartEmpty.textContent = moneyExact(0);
+  }
+  renderRegionOptions(document.getElementById("regionSearchInput")?.value || "");
+}
+
+function renderRegionOptions(filterText = "") {
+  const listEl = document.getElementById("regionOptionsList");
+  if (!listEl) return;
+  const q = filterText.trim().toLowerCase();
+  const regions = (state.meta.regions || []).filter(
+    (r) =>
+      !q ||
+      r.country_name.toLowerCase().includes(q) ||
+      r.currency_code.toLowerCase().includes(q) ||
+      (r.currency_name || "").toLowerCase().includes(q)
+  );
+  if (!regions.length) {
+    listEl.innerHTML = `<div class="muted small" style="padding:8px;">No matching country or currency.</div>`;
+    return;
+  }
+  const activeId = Number(state.activeRegion?.region_id || 0);
+  listEl.innerHTML = regions
+    .map(
+      (r) => `
+      <button type="button" class="region-opt ${Number(r.region_id) === activeId ? "active" : ""}" onclick="selectRegion(${r.region_id})">
+        <span>
+          <strong>${esc(r.country_name)}</strong>
+          <span class="muted small">(${esc(r.country_code)})</span>
+        </span>
+        <span class="region-currency-badge">${esc(r.symbol)} ${esc(r.currency_code)}</span>
+      </button>
+    `
+    )
+    .join("");
+}
+
+function toggleRegionDialog(forceOpen = null) {
+  const dlg = document.getElementById("regionDialog");
+  if (!dlg) return;
+  const shouldOpen = forceOpen === null ? dlg.classList.contains("hidden") : Boolean(forceOpen);
+  dlg.classList.toggle("hidden", !shouldOpen);
+  if (shouldOpen) {
+    const search = document.getElementById("regionSearchInput");
+    if (search) {
+      search.value = "";
+      renderRegionOptions("");
+      search.focus();
+    }
+  }
+}
+
+async function selectRegion(regionId) {
+  try {
+    const res = await api("/api/auth/region", {
+      method: "PUT",
+      body: JSON.stringify({ region_id: Number(regionId) }),
+    });
+    if (res.active_region) {
+      state.activeRegion = res.active_region;
+    }
+    toggleRegionDialog(false);
+    updateRegionUI();
+    renderFeaturedSpotlight();
+    renderGames();
+    renderCartModal();
+    await Promise.all([
+      loadAuthSession(),
+      loadLibrary(),
+      loadWishlist(),
+      loadWalletAndOrders(),
+      loadPublisherStudio(),
+    ]);
+    toast(`Region set to ${state.activeRegion.country_name} (${state.activeRegion.symbol} ${state.activeRegion.currency_code}).`);
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+function syncRegisterWalletPlaceholder() {
+  const sel = document.getElementById("registerRegionSelect");
+  const inp = document.getElementById("registerWalletInput");
+  if (!sel || !inp) return;
+  const reg = (state.meta.regions || []).find((r) => Number(r.region_id) === Number(sel.value));
+  if (!reg) return;
+  const isZero = Number(reg.minor_units ?? 2) === 0;
+  inp.step = isZero ? "1" : "0.01";
+  inp.placeholder = `Initial Wallet Balance (${reg.symbol} ${reg.currency_code})`;
+  const defaultDisplay = Number((5000 * Number(reg.rate_from_inr || 1)).toFixed(reg.minor_units ?? 2));
+  inp.value = isZero ? String(Math.round(defaultDisplay)) : defaultDisplay.toFixed(2);
 }
 
 function fmtMinutes(mins) {
@@ -87,6 +230,25 @@ function fmtMinutes(mins) {
   if (m < 60) return `${m}m`;
   const h = (m / 60).toFixed(1);
   return `${h} hrs (${m}m)`;
+}
+
+function fmtDurationHMS(totalSeconds) {
+  const s = Math.max(0, Math.floor(Number(totalSeconds || 0)));
+  const hrs = Math.floor(s / 3600);
+  const mins = Math.floor((s % 3600) / 60);
+  const secs = s % 60;
+  const pad = (n) => String(n).padStart(2, "0");
+  return hrs > 0 ? `${pad(hrs)}:${pad(mins)}:${pad(secs)}` : `${pad(mins)}:${pad(secs)}`;
+}
+
+function fmtPlaytime(totalSeconds, fallbackMinutes = 0) {
+  const secs = Math.max(0, Math.floor(Number(totalSeconds ?? (fallbackMinutes || 0) * 60)));
+  if (secs < 60) return `${secs}s`;
+  const mins = Math.floor(secs / 60);
+  const rem = secs % 60;
+  if (mins < 60) return rem > 0 ? `${mins}m ${rem}s` : `${mins}m`;
+  const h = (secs / 3600).toFixed(1);
+  return rem > 0 ? `${h} hrs (${mins}m ${rem}s)` : `${h} hrs (${mins}m)`;
 }
 
 function toast(msg, isError = false) {
@@ -171,6 +333,11 @@ async function loadAuthSession() {
   const data = await api("/api/auth/me");
   const loggedOutEl = document.getElementById("loggedOutControls");
   const loggedInEl = document.getElementById("loggedInControls");
+
+  if (data.active_region) {
+    state.activeRegion = data.active_region;
+  }
+  updateRegionUI();
 
   if (!data.authenticated || !data.user) {
     state.activeUserId = null;
@@ -286,6 +453,18 @@ async function loadMeta() {
   document.getElementById("manageSaleSelect").innerHTML = state.meta.sales
     .map((s) => `<option value="${s.sale_id}">${esc(s.title)} ${s.is_active ? "(ACTIVE)" : ""}</option>`)
     .join("");
+
+  const regSel = document.getElementById("registerRegionSelect");
+  if (regSel && state.meta.regions) {
+    const prevReg = regSel.value;
+    regSel.innerHTML = state.meta.regions
+      .map((r) => `<option value="${r.region_id}">${esc(r.country_name)} (${esc(r.symbol)} ${esc(r.currency_code)})</option>`)
+      .join("");
+    if (prevReg) regSel.value = prevReg;
+    else if (state.activeRegion?.region_id) regSel.value = String(state.activeRegion.region_id);
+    syncRegisterWalletPlaceholder();
+  }
+  renderRegionOptions(document.getElementById("regionSearchInput")?.value || "");
 
   const activeSales = state.meta.sales.filter((s) => s.is_active);
   document.getElementById("activeSaleBanner").textContent = activeSales.length
@@ -494,10 +673,15 @@ async function openGameDetail(gameId) {
   const inCart = state.cart.some((c) => c.game_id === g.game_id);
   const isNonPlayer = state.role === "publisher" || state.role === "admin";
 
+  const refundBtn =
+    !isNonPlayer && g.owned && g.refund_info && g.refund_info.refund_eligible
+      ? `<button class="btn btn-danger" onclick="openRefundModal(${g.game_id})">Refund (${moneyExact(g.refund_info.refundable_amount)})</button>`
+      : "";
+
   const buyBtn = isNonPlayer
     ? `<span class="tag-chip">${state.role === "admin" ? "Admin Preview" : "Publisher View"}</span>`
     : g.owned
-    ? `<span class="tag-chip">Owned in Library</span>`
+    ? `<div class="card-actions"><span class="tag-chip">Owned in Library</span>${refundBtn}</div>`
     : inCart
     ? `<button class="btn btn-secondary" onclick="removeFromCart(${g.game_id}); openGameDetail(${g.game_id})">Remove from Cart</button>`
     : `<button class="btn btn-sale" onclick="addToCart(${g.game_id}); openGameDetail(${g.game_id})">Add to Cart · ${money(g.effective_price)}</button>`;
@@ -537,6 +721,11 @@ async function openGameDetail(gameId) {
     <p>${esc(g.description)}</p>
     <div class="tag-row">${g.tags.map((t) => `<span class="tag-chip">${esc(t.name)}</span>`).join("")}</div>
     ${g.discount_pct > 0 ? `<p class="mt-sm" style="color:var(--sale)">Active Sale (${esc(g.sale_title)}): -${g.discount_pct}% off (${moneyExact(g.base_price)} → ${money(g.effective_price)})</p>` : ""}
+    ${
+      !isNonPlayer && g.owned && g.refund_info
+        ? `<div class="mt-sm"><span class="refund-pill ${g.refund_info.refund_eligible ? "eligible" : "expired"}">Steam Refund Policy: ${esc(g.refund_info.refund_status_text)}</span></div>`
+        : ""
+    }
 
     <hr class="divider" />
     <h3>Achievements (${g.achievements.length})</h3>
@@ -633,7 +822,7 @@ function renderCartModal() {
 
   if (!state.cart.length) {
     wrap.innerHTML = `<div class="muted">Your cart is empty.</div>`;
-    document.getElementById("cartTotalValue").textContent = "₹0.00";
+    document.getElementById("cartTotalValue").textContent = moneyExact(0);
     return;
   }
   let total = 0;
@@ -685,7 +874,8 @@ function renderPaymentMethod() {
     return;
   }
   panel.innerHTML = `
-    <strong>Scan and enter ${moneyExact(total)}</strong>
+    <strong>Scan and enter ${formatCurrencyNumber(total, "₹", 2)}</strong>
+    <div class="small muted">UPI pays in Indian rupees (INR), whatever store currency is selected.</div>
     <img src="/static/images/upi_qr.png" alt="UPI QR code for senzarublackrose-1@oksbi" />
     <div class="small">Paying <strong>Hariharan Sankar</strong></div>
     <div class="small mt-xs"><a href="${esc(UPI_LINK)}">Open in a UPI app</a> (on your phone)</div>
@@ -759,39 +949,158 @@ async function unlockAchievement(achievementId, gameId) {
 }
 
 async function loadLibrary() {
+  if (state.playTimerInterval) {
+    clearInterval(state.playTimerInterval);
+    state.playTimerInterval = null;
+  }
   const wrap = document.getElementById("libraryList");
   if (!state.activeUserId || state.role !== "user") {
+    state.library = [];
     wrap.innerHTML = loginGuardHtml("your Game Library");
     return;
   }
   const rows = await api(`/api/users/${state.activeUserId}/library`);
+  state.library = rows;
   if (!rows.length) {
     wrap.innerHTML = `<div class="card muted">No games in library yet. Purchase one from the Store!</div>`;
     return;
   }
   wrap.innerHTML = rows
-    .map(
-      (g) => `
+    .map((g) => {
+      const isRunning = Boolean(g.active_session_started_at);
+      const refundBadge = g.refund_eligible
+        ? `<span class="refund-pill eligible">${esc(g.refund_status_text)}</span>`
+        : `<span class="refund-pill expired">${esc(g.refund_status_text || "Not refundable")}</span>`;
+      const refundAction = g.refund_eligible
+        ? `<button class="btn-sm btn-danger" onclick="openRefundModal(${g.game_id})">Refund (${moneyExact(g.refundable_amount)})</button>`
+        : "";
+      const playExitBtn = isRunning
+        ? `<button class="btn-sm btn-exit" onclick="exitPlaySession(${g.game_id})">■ Exit</button>`
+        : `<button class="btn-sm btn-primary" onclick="startPlaySession(${g.game_id})">▶ Play</button>
+           <button class="btn-sm btn-ghost" onclick="playGame(${g.game_id}, 30)" title="Quick-simulate +30m playtime">+30m</button>`;
+      const sessionInfoHtml = isRunning
+        ? `<div class="mt-xs"><span class="session-live-pill">● Active Session · Start: <code>${esc(g.active_session_started_at)}</code> · Timer: <span class="live-timer" data-elapsed="${Number(g.active_session_elapsed_seconds || 0)}">${fmtDurationHMS(g.active_session_elapsed_seconds || 0)}</span></span></div>`
+        : g.last_session_started_at && g.last_session_ended_at
+        ? `<div class="muted small mt-xs">Last Session: <code>${esc(g.last_session_started_at)}</code> → <code>${esc(g.last_session_ended_at)}</code> (<strong>${fmtDurationHMS(g.last_session_seconds || 0)}</strong>)</div>`
+        : "";
+      return `
       <div class="list-row">
         <div class="lib-item-left">
           <div class="lib-thumb" style="background-image:url('${gameBannerUrl(g.game_id, g.title)}')"></div>
           <div>
             <strong>${esc(g.title)}</strong> <span class="muted small">by ${esc(g.developer_name)}</span>
             <div class="muted small mt-xs">
-              Playtime: <strong>${fmtMinutes(g.playtime_minutes)}</strong> ·
+              Playtime: <strong>${fmtPlaytime(g.playtime_seconds, g.playtime_minutes)}</strong> ·
               Last Played: ${esc(g.last_played_at || "Never")} ·
               Achievements: ${g.unlocked_achievements}/${g.total_achievements}
             </div>
+            ${sessionInfoHtml}
+            <div class="mt-xs">${refundBadge}</div>
           </div>
         </div>
         <div class="card-actions">
-          <button class="btn-sm btn-primary" onclick="playGame(${g.game_id}, 30)">▶ Play (+30m)</button>
+          ${playExitBtn}
           <button class="btn-sm btn-secondary" onclick="openGameDetail(${g.game_id})">Details &amp; Achievements</button>
+          ${refundAction}
         </div>
       </div>
-    `
-    )
+    `;
+    })
     .join("");
+
+  if (rows.some((r) => Boolean(r.active_session_started_at))) {
+    state.playTimerInterval = setInterval(() => {
+      document.querySelectorAll(".live-timer").forEach((el) => {
+        const next = Number(el.dataset.elapsed || 0) + 1;
+        el.dataset.elapsed = String(next);
+        el.textContent = fmtDurationHMS(next);
+      });
+    }, 1000);
+  }
+}
+
+function findRefundCandidate(gameId) {
+  const libItem = state.library.find((g) => Number(g.game_id) === Number(gameId));
+  if (libItem) {
+    return {
+      game_id: libItem.game_id,
+      title: libItem.title,
+      order_id: libItem.order_id,
+      purchased_at: libItem.purchased_at || libItem.acquired_at,
+      playtime_minutes: libItem.playtime_minutes,
+      playtime_seconds: libItem.playtime_seconds,
+      refundable_amount: libItem.refundable_amount,
+      refund_eligible: libItem.refund_eligible,
+      refund_status_text: libItem.refund_status_text,
+    };
+  }
+  for (const o of state.orders) {
+    for (const it of o.items || []) {
+      if (Number(it.game_id) === Number(gameId) && it.status === "purchased") {
+        return {
+          game_id: it.game_id,
+          title: it.title,
+          order_id: o.order_id,
+          purchased_at: o.created_at,
+          playtime_minutes: it.playtime_minutes || 0,
+          refundable_amount: it.refundable_amount ?? it.price_at_purchase,
+          refund_eligible: it.refund_eligible,
+          refund_status_text: it.refund_status_text,
+        };
+      }
+    }
+  }
+  return null;
+}
+
+async function openRefundModal(gameId) {
+  if (!state.activeUserId || state.role !== "user") return openModal("loginModal");
+  let item = findRefundCandidate(gameId);
+  if (!item) {
+    await loadLibrary();
+    item = findRefundCandidate(gameId);
+  }
+  if (!item) return toast("Refund details unavailable for this game.", true);
+  if (!item.refund_eligible) return toast(item.refund_status_text || "Game is not eligible for refund.", true);
+
+  state.pendingRefundGameId = Number(gameId);
+  document.getElementById("refundSummaryBox").innerHTML = `
+    <div><span class="lbl">Game</span><strong>${esc(item.title)}</strong></div>
+    <div><span class="lbl">Order Reference</span><strong>#${esc(item.order_id || "—")}</strong></div>
+    <div><span class="lbl">Playtime Recorded</span><strong>${fmtPlaytime(item.playtime_seconds, item.playtime_minutes)}</strong> <span class="muted small">(limit &lt; 2h)</span></div>
+    <div><span class="lbl">Purchased At</span><strong>${esc(item.purchased_at || "—")}</strong></div>
+    <div style="grid-column: 1 / -1; border-top: 1px solid var(--border); padding-top: 8px; display:flex; justify-content:space-between; align-items:center;">
+      <span class="muted">Refund credited to SAUNA Wallet</span>
+      <strong style="color:var(--sale); font-size:16px;">+${moneyExact(item.refundable_amount)}</strong>
+    </div>
+  `;
+  openModal("refundModal");
+}
+
+async function startPlaySession(gameId) {
+  try {
+    const res = await api(`/api/users/${state.activeUserId}/library/${gameId}/play/start`, {
+      method: "POST",
+    });
+    toast(`Session started at ${res.active_session_started_at} — click Exit when done.`);
+    await Promise.all([loadLibrary(), loadAuthSession()]);
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+async function exitPlaySession(gameId) {
+  try {
+    const res = await api(`/api/users/${state.activeUserId}/library/${gameId}/play/exit`, {
+      method: "POST",
+    });
+    toast(
+      `Exited session (${fmtDurationHMS(res.last_session_seconds)} noted: ${res.last_session_started_at} → ${res.last_session_ended_at}).`
+    );
+    await Promise.all([loadLibrary(), loadAuthSession()]);
+  } catch (err) {
+    toast(err.message, true);
+  }
 }
 
 async function playGame(gameId, minutes) {
@@ -861,6 +1170,7 @@ async function loadWalletAndOrders() {
   const guard = document.getElementById("walletAuthGuard");
   const content = document.getElementById("walletContent");
   if (!state.activeUserId || state.role !== "user") {
+    state.orders = [];
     guard.innerHTML = loginGuardHtml("Wallet & Orders");
     guard.classList.remove("hidden");
     content.classList.add("hidden");
@@ -873,6 +1183,7 @@ async function loadWalletAndOrders() {
     api(`/api/users/${state.activeUserId}/wallet-transactions`),
     api(`/api/users/${state.activeUserId}/orders`),
   ]);
+  state.orders = orders;
 
   const txnWrap = document.getElementById("walletTxnTable");
   txnWrap.innerHTML = txns.length
@@ -885,7 +1196,7 @@ async function loadWalletAndOrders() {
               <tr>
                 <td>#${t.txn_id}</td>
                 <td><span class="tag-chip">${esc(t.txn_type)}</span></td>
-                <td style="color:${t.amount >= 0 ? "var(--sale)" : "var(--danger)"}">${t.amount >= 0 ? "+" : ""}${moneyExact(t.amount)}</td>
+                <td style="color:${t.amount >= 0 ? "var(--sale)" : "var(--danger)"}">${t.amount >= 0 ? "+" : ""}${moneyRecorded(t.display_amount, t.amount, t.currency_symbol, t.minor_units)} <span class="muted small">(${esc(t.currency_code || "INR")})</span></td>
                 <td>${t.reference_order_id ? `#${t.reference_order_id}` : "—"}</td>
                 <td class="muted">${esc(t.created_at)}</td>
               </tr>`
@@ -903,11 +1214,27 @@ async function loadWalletAndOrders() {
           <div class="review-card">
             <div class="review-head">
               <strong>Order #${o.order_id} · ${esc(o.payment_method)}</strong>
-              <span style="color:var(--sale)"><strong>${moneyExact(o.total_amount)}</strong> · ${esc(o.status)}</span>
+              <span style="display:inline-flex;align-items:center;gap:6px;">
+                <strong style="color:var(--sale)">${moneyRecorded(o.display_total_amount, o.total_amount, o.currency_symbol, o.minor_units)}</strong>
+                <span class="muted small">(${esc(o.currency_code || "INR")})</span>
+                <span class="order-status-pill ${esc(o.status)}">${esc(o.status.replace("_", " "))}</span>
+              </span>
             </div>
             <div class="muted small">${esc(o.created_at)}</div>
-            <ul class="mt-sm" style="margin:6px 0 0 18px; padding:0;">
-              ${o.items.map((it) => `<li>${esc(it.title)} — ${moneyExact(it.price_at_purchase)}</li>`).join("")}
+            <ul class="mt-sm" style="margin:8px 0 0 18px; padding:0;">
+              ${o.items
+                .map((it) => {
+                  let badge = "";
+                  if (it.status === "refunded") {
+                    badge = `<span class="refund-pill refunded">Refunded${it.refunded_at ? ` · ${esc(it.refunded_at)}` : ""}${it.refund_reason ? ` (${esc(it.refund_reason)})` : ""}</span>`;
+                  } else if (it.refund_eligible) {
+                    badge = `<button class="btn-sm btn-danger" onclick="openRefundModal(${it.game_id})">Refund</button>`;
+                  } else if (it.refund_status_text) {
+                    badge = `<span class="refund-pill expired">${esc(it.refund_status_text)}</span>`;
+                  }
+                  return `<li><div class="order-item-row"><span>${esc(it.title)} — ${moneyRecorded(it.display_price_at_purchase, it.price_at_purchase, it.currency_symbol, it.minor_units)}</span><span>${badge}</span></div></li>`;
+                })
+                .join("")}
             </ul>
           </div>`
         )
@@ -1203,13 +1530,45 @@ function bindEvents() {
     el.addEventListener("click", () => closeModal(el.dataset.close));
   });
 
+  document.getElementById("regionPickerBtn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleRegionDialog();
+  });
+
+  document.getElementById("closeRegionDialogBtn").addEventListener("click", () => toggleRegionDialog(false));
+
+  document.getElementById("regionSearchInput").addEventListener("input", (e) => {
+    renderRegionOptions(e.target.value);
+  });
+
+  document.getElementById("regionDialog").addEventListener("click", (e) => {
+    e.stopPropagation();
+  });
+
+  document.addEventListener("click", () => {
+    toggleRegionDialog(false);
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") toggleRegionDialog(false);
+  });
+
+  document.getElementById("registerRegionSelect").addEventListener("change", syncRegisterWalletPlaceholder);
+
   document.getElementById("openCartBtn").addEventListener("click", () => {
     renderCartModal();
     openModal("cartModal");
   });
 
   document.getElementById("openLoginBtn").addEventListener("click", () => openModal("loginModal"));
-  document.getElementById("openRegisterBtn").addEventListener("click", () => openModal("registerModal"));
+  document.getElementById("openRegisterBtn").addEventListener("click", () => {
+    const regSel = document.getElementById("registerRegionSelect");
+    if (regSel && state.activeRegion?.region_id) {
+      regSel.value = String(state.activeRegion.region_id);
+      syncRegisterWalletPlaceholder();
+    }
+    openModal("registerModal");
+  });
 
   document.getElementById("loginForm").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -1235,10 +1594,14 @@ function bindEvents() {
   document.getElementById("registerForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
+    const payload = {
+      ...Object.fromEntries(fd.entries()),
+      input_in_active_currency: true,
+    };
     try {
       const res = await api("/api/auth/register", {
         method: "POST",
-        body: JSON.stringify(Object.fromEntries(fd.entries())),
+        body: JSON.stringify(payload),
       });
       closeModal("registerModal");
       e.target.reset();
@@ -1256,7 +1619,15 @@ function bindEvents() {
   document.getElementById("logoutBtn").addEventListener("click", async () => {
     await api("/api/auth/logout", { method: "POST" });
     state.cart = [];
+    state.library = [];
+    state.orders = [];
+    state.pendingRefundGameId = null;
+    if (state.playTimerInterval) {
+      clearInterval(state.playTimerInterval);
+      state.playTimerInterval = null;
+    }
     state.dbTables = [];
+    closeModal("refundModal");
     updateCartBadge();
     document.getElementById("loginIdNotice").classList.add("hidden");
     document.getElementById("dbTablesList").innerHTML = "";
@@ -1269,6 +1640,29 @@ function bindEvents() {
 
   document.querySelectorAll('input[name="payMethod"]').forEach((el) => {
     el.addEventListener("change", renderPaymentMethod);
+  });
+
+  document.getElementById("refundForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!state.activeUserId || !state.pendingRefundGameId) return;
+    const gameId = state.pendingRefundGameId;
+    const reason = document.getElementById("refundReasonSelect").value;
+    try {
+      const res = await api(`/api/users/${state.activeUserId}/library/${gameId}/refund`, {
+        method: "POST",
+        body: JSON.stringify({ reason }),
+      });
+      state.pendingRefundGameId = null;
+      state.walletBalance = Number(res.wallet_balance);
+      document.getElementById("walletChip").textContent = moneyExact(state.walletBalance);
+      document.getElementById("walletBig").textContent = moneyExact(state.walletBalance);
+      closeModal("refundModal");
+      closeModal("gameModal");
+      toast(`Refunded "${res.game_title}" (+${moneyExact(res.refund_amount)} credited to Wallet).`);
+      await refreshUserData();
+    } catch (err) {
+      toast(err.message, true);
+    }
   });
 
   document.getElementById("checkoutBtn").addEventListener("click", async () => {
@@ -1303,12 +1697,13 @@ function bindEvents() {
     e.preventDefault();
     const amount = document.getElementById("depositAmount").value;
     try {
-      await api(`/api/users/${state.activeUserId}/wallet/deposit`, {
+      const res = await api(`/api/users/${state.activeUserId}/wallet/deposit`, {
         method: "POST",
-        body: JSON.stringify({ amount }),
+        body: JSON.stringify({ amount, input_in_active_currency: true }),
       });
       document.getElementById("depositAmount").value = "";
-      toast(`Deposited ${moneyExact(amount)} to Wallet!`);
+      const reg = state.activeRegion || { symbol: "₹", minor_units: 2 };
+      toast(`Deposited ${formatCurrencyNumber(res.deposited_display_amount, reg.symbol, reg.minor_units)} to Wallet!`);
       await Promise.all([loadAuthSession(), loadWalletAndOrders()]);
     } catch (err) {
       toast(err.message, true);

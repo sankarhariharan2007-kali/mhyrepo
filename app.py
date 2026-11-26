@@ -1,7 +1,7 @@
 import os
 import re
 from contextlib import contextmanager
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from flask import Flask, jsonify, render_template, request, session
 from werkzeug.security import check_password_hash, generate_password_hash
 import psycopg2
@@ -26,6 +26,8 @@ ENABLE_SQL_EXPLORER = os.environ.get("ENABLE_SQL_EXPLORER", "1") == "1"
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 
 ALLOWED_TABLES = {
+    "currencies",
+    "regions",
     "publishers",
     "developers",
     "games",
@@ -44,6 +46,10 @@ ALLOWED_TABLES = {
     "tags",
     "game_tags",
 }
+
+REFUND_MAX_PLAYTIME_MINUTES = 120
+REFUND_MAX_DAYS = 14
+REFUND_MAX_SECONDS = REFUND_MAX_DAYS * 86400
 
 
 @contextmanager
@@ -101,6 +107,124 @@ def _compute_effective_price(base_price, discount_pct):
         return round(float(base), 2)
     discounted = base * (Decimal("100") - Decimal(str(discount_pct))) / Decimal("100")
     return round(float(discounted), 2)
+
+
+def _convert_from_inr(amount_inr, rate_from_inr, minor_units=2):
+    amt = Decimal(str(amount_inr or 0))
+    rate = Decimal(str(rate_from_inr or 1))
+    units = int(minor_units or 0)
+    quant = Decimal("1") if units == 0 else Decimal("1").scaleb(-units)
+    return (amt * rate).quantize(quant, rounding=ROUND_HALF_UP)
+
+
+def _convert_to_inr(display_amount, rate_from_inr):
+    amt = Decimal(str(display_amount or 0))
+    rate = Decimal(str(rate_from_inr or 1))
+    return (amt / rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _format_currency_text(display_amount, symbol, minor_units=2):
+    units = int(minor_units or 0)
+    val = float(display_amount or 0)
+    if units == 0:
+        return f"{symbol}{round(val):,}"
+    return f"{symbol}{val:,.{units}f}"
+
+
+def _region_select_sql():
+    return (
+        "SELECT r.region_id, r.country_name, r.country_code, r.currency_code, "
+        "c.name AS currency_name, c.symbol, c.minor_units, c.rate_from_inr "
+        "FROM REGIONS r JOIN CURRENCIES c ON c.currency_code = r.currency_code "
+    )
+
+
+def _resolve_region(cur, region_id=None, country_name=None):
+    base_sql = _region_select_sql()
+    row = None
+    if region_id:
+        cur.execute(base_sql + "WHERE r.region_id = %s", (int(region_id),))
+        row = cur.fetchone()
+    if not row and country_name:
+        cur.execute(base_sql + "WHERE LOWER(r.country_name) = LOWER(%s)", (country_name.strip(),))
+        row = cur.fetchone()
+    if not row:
+        cur.execute(base_sql + "WHERE r.currency_code = 'INR' ORDER BY r.region_id ASC LIMIT 1")
+        row = cur.fetchone()
+    if not row:
+        return {
+            "region_id": 1,
+            "country_name": "India",
+            "country_code": "IN",
+            "currency_code": "INR",
+            "currency_name": "Indian Rupee",
+            "symbol": "₹",
+            "minor_units": 2,
+            "rate_from_inr": 1.0,
+        }
+    return serialize_row(row)
+
+
+def _resolve_active_region(cur):
+    sess_rid = session.get("region_id")
+    if sess_rid:
+        return _resolve_region(cur, region_id=sess_rid)
+    uid = session.get("user_id")
+    if uid:
+        cur.execute("SELECT region_id, country FROM USERS WHERE user_id = %s", (int(uid),))
+        u = cur.fetchone()
+        if u:
+            reg = _resolve_region(cur, region_id=u.get("region_id"), country_name=u.get("country"))
+            session["region_id"] = int(reg["region_id"])
+            return reg
+    return _resolve_region(cur)
+
+
+def _evaluate_refund_eligibility(playtime_minutes, price_at_purchase, seconds_since_purchase):
+    """Evaluate Steam 2-hour (<120m) & 14-day refund eligibility."""
+    playtime = int(playtime_minutes or 0)
+    price = float(price_at_purchase or 0)
+    if price <= 0 or seconds_since_purchase is None:
+        return {
+            "refund_eligible": False,
+            "refundable_amount": 0.0,
+            "refund_minutes_remaining": 0,
+            "refund_days_remaining": 0,
+            "refund_status_text": "Free license (no paid purchase)",
+        }
+
+    elapsed_sec = max(0, int(seconds_since_purchase))
+    mins_left = max(0, REFUND_MAX_PLAYTIME_MINUTES - playtime)
+    secs_left = max(0, REFUND_MAX_SECONDS - elapsed_sec)
+    days_left = secs_left // 86400
+
+    if playtime >= REFUND_MAX_PLAYTIME_MINUTES:
+        return {
+            "refund_eligible": False,
+            "refundable_amount": round(price, 2),
+            "refund_minutes_remaining": 0,
+            "refund_days_remaining": days_left,
+            "refund_status_text": f"Ineligible · {playtime}m played (2-hour / 120m limit reached)",
+        }
+
+    if elapsed_sec > REFUND_MAX_SECONDS:
+        days_ago = elapsed_sec // 86400
+        return {
+            "refund_eligible": False,
+            "refundable_amount": round(price, 2),
+            "refund_minutes_remaining": mins_left,
+            "refund_days_remaining": 0,
+            "refund_status_text": f"Ineligible · Purchased {days_ago}d ago (14-day limit exceeded)",
+        }
+
+    window_label = f"{days_left}d left" if days_left >= 1 else "<1d left"
+    return {
+        "refund_eligible": True,
+        "refundable_amount": round(price, 2),
+        "refund_minutes_remaining": mins_left,
+        "refund_days_remaining": days_left,
+        "refund_status_text": f"Eligible · {playtime}m / 120m played · {window_label}",
+    }
 
 
 def _active_discount_subquery():
@@ -182,6 +306,8 @@ def auth_login():
         session["user_id"] = int(user["user_id"])
         session["role"] = user["role"]
         session["publisher_id"] = int(user["publisher_id"]) if user["publisher_id"] else None
+        region = _resolve_region(cur, region_id=user.get("region_id"), country_name=user.get("country"))
+        session["region_id"] = int(region["region_id"])
         return jsonify({
             "authenticated": True,
             "user_id": int(user["user_id"]),
@@ -190,7 +316,9 @@ def auth_login():
             "publisher_id": session["publisher_id"],
             "publisher_name": user["publisher_name"],
             "wallet_balance": float(user["wallet_balance"]),
-            "country": user["country"],
+            "country": region["country_name"],
+            "region_id": int(region["region_id"]),
+            "active_region": region,
         })
 
 
@@ -204,7 +332,8 @@ def auth_register():
     username = (data.get("username") or "").strip()
     email = (data.get("email") or "").strip()
     password = data.get("password") or ""
-    country = (data.get("country") or "India").strip()
+    region_id_req = data.get("region_id")
+    country_req = (data.get("country") or "").strip()
 
     if not username or not email or not password:
         return _error("Username, email, and password are required.")
@@ -213,9 +342,17 @@ def auth_register():
 
     pw_hash = generate_password_hash(password)
     with db_cursor(commit=True) as (_, cur):
+        region = _resolve_region(cur, region_id=region_id_req, country_name=country_req or "India")
+        country = region["country_name"]
+        region_id = int(region["region_id"])
+        rate = Decimal(str(region["rate_from_inr"]))
+        minor_units = int(region["minor_units"])
+        curr_code = region["currency_code"]
+
         publisher_id = None
         publisher_name = None
-        wallet = 0.0
+        wallet_inr = Decimal("0.00")
+        display_wallet = Decimal("0.00")
 
         if account_type == "publisher":
             publisher_name = (data.get("publisher_name") or "").strip()
@@ -233,26 +370,34 @@ def auth_register():
             )
             publisher_id = cur.fetchone()["publisher_id"]
         else:
-            wallet = float(data.get("wallet_balance") or 0)
-            if wallet < 0:
+            raw_wallet = Decimal(str(data.get("wallet_balance") or 0))
+            if raw_wallet < 0:
                 return _error("Initial wallet balance cannot be negative.")
+            if data.get("input_in_active_currency"):
+                display_wallet = raw_wallet
+                wallet_inr = _convert_to_inr(raw_wallet, rate)
+            else:
+                wallet_inr = raw_wallet.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                display_wallet = _convert_from_inr(wallet_inr, rate, minor_units)
 
         cur.execute(
-            "INSERT INTO USERS (username, email, password_hash, role, publisher_id, wallet_balance, country) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING user_id",
-            (username, email, pw_hash, account_type, publisher_id, wallet, country),
+            "INSERT INTO USERS (username, email, password_hash, role, publisher_id, wallet_balance, country, region_id) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING user_id",
+            (username, email, pw_hash, account_type, publisher_id, wallet_inr, country, region_id),
         )
         user_id = cur.fetchone()["user_id"]
-        if account_type == "user" and wallet > 0:
+        if account_type == "user" and wallet_inr > 0:
             cur.execute(
-                "INSERT INTO WALLET_TRANSACTIONS (user_id, amount, txn_type, reference_order_id) "
-                "VALUES (%s, %s, 'deposit', NULL)",
-                (user_id, wallet),
+                "INSERT INTO WALLET_TRANSACTIONS "
+                "(user_id, amount, currency_code, exchange_rate_used, display_amount, txn_type, reference_order_id) "
+                "VALUES (%s, %s, %s, %s, %s, 'deposit', NULL)",
+                (user_id, wallet_inr, curr_code, rate, display_wallet),
             )
 
         session["user_id"] = int(user_id)
         session["role"] = account_type
         session["publisher_id"] = int(publisher_id) if publisher_id else None
+        session["region_id"] = region_id
         return jsonify({
             "authenticated": True,
             "user_id": int(user_id),
@@ -260,9 +405,33 @@ def auth_register():
             "role": account_type,
             "publisher_id": session["publisher_id"],
             "publisher_name": publisher_name,
-            "wallet_balance": float(wallet),
+            "wallet_balance": float(wallet_inr),
             "country": country,
+            "region_id": region_id,
+            "active_region": region,
         }), 201
+
+
+@app.route("/api/auth/region", methods=["PUT"])
+def set_active_region():
+    data = request.get_json(force=True) or {}
+    region_id = data.get("region_id")
+    if not region_id:
+        return _error("region_id is required.")
+    with db_cursor(commit=True) as (_, cur):
+        cur.execute(_region_select_sql() + "WHERE r.region_id = %s", (int(region_id),))
+        row = cur.fetchone()
+        if not row:
+            return _error("Unknown region.", 404)
+        region = serialize_row(row)
+        session["region_id"] = int(region["region_id"])
+        uid = session.get("user_id")
+        if uid:
+            cur.execute(
+                "UPDATE USERS SET region_id = %s, country = %s WHERE user_id = %s",
+                (int(region["region_id"]), region["country_name"], int(uid)),
+            )
+        return jsonify({"active_region": region})
 
 
 @app.route("/api/auth/logout", methods=["POST"])
@@ -274,13 +443,13 @@ def auth_logout():
 @app.route("/api/auth/me", methods=["GET"])
 def auth_me():
     uid = session.get("user_id")
-    if not uid:
-        return jsonify({"authenticated": False, "user": None})
-
     with db_cursor() as (_, cur):
+        if not uid:
+            return jsonify({"authenticated": False, "user": None, "active_region": _resolve_active_region(cur)})
+
         cur.execute(
             "SELECT u.user_id, u.username, u.role, u.publisher_id, p.name AS publisher_name, "
-            "u.wallet_balance, u.country, u.created_at "
+            "u.wallet_balance, u.country, u.region_id, u.created_at "
             "FROM USERS u LEFT JOIN PUBLISHERS p ON p.publisher_id = u.publisher_id "
             "WHERE u.user_id = %s",
             (int(uid),),
@@ -288,10 +457,11 @@ def auth_me():
         user = cur.fetchone()
         if not user:
             session.clear()
-            return jsonify({"authenticated": False, "user": None})
+            return jsonify({"authenticated": False, "user": None, "active_region": _resolve_active_region(cur)})
 
         session["role"] = user["role"]
         session["publisher_id"] = int(user["publisher_id"]) if user["publisher_id"] else None
+        active_region = _resolve_active_region(cur)
 
         cur.execute(
             "SELECT COUNT(*) AS owned_games, COALESCE(SUM(playtime_minutes), 0) AS total_playtime "
@@ -339,6 +509,7 @@ def auth_me():
         return jsonify({
             "authenticated": True,
             "user": serialize_row(user),
+            "active_region": active_region,
             "stats": {
                 "owned_games": int(lib["owned_games"]),
                 "total_playtime_minutes": int(lib["total_playtime"]),
@@ -509,12 +680,43 @@ def get_game_detail(game_id):
 
         game["owned"] = False
         game["wishlisted"] = False
+        game["refund_info"] = None
         if user_id:
             cur.execute(
-                "SELECT 1 FROM USER_LIBRARY WHERE user_id = %s AND game_id = %s",
+                "SELECT playtime_minutes, active_session_started_at FROM USER_LIBRARY WHERE user_id = %s AND game_id = %s",
                 (int(user_id), game_id),
             )
-            game["owned"] = cur.fetchone() is not None
+            lib_row = cur.fetchone()
+            game["owned"] = lib_row is not None
+            if lib_row is not None:
+                cur.execute(
+                    """
+                    SELECT oi.order_id, oi.order_item_id, oi.price_at_purchase,
+                           o.created_at AS purchased_at,
+                           EXTRACT(EPOCH FROM (NOW() - o.created_at))::bigint AS seconds_since_purchase
+                    FROM ORDER_ITEMS oi
+                    JOIN ORDERS o ON o.order_id = oi.order_id
+                    WHERE o.user_id = %s AND oi.game_id = %s AND oi.status = 'purchased'
+                    ORDER BY o.created_at DESC, oi.order_item_id DESC
+                    LIMIT 1
+                    """,
+                    (int(user_id), game_id),
+                )
+                oi_row = cur.fetchone()
+                refund_meta = _evaluate_refund_eligibility(
+                    lib_row["playtime_minutes"],
+                    oi_row["price_at_purchase"] if oi_row else 0,
+                    oi_row["seconds_since_purchase"] if oi_row else None,
+                )
+                if lib_row["active_session_started_at"] is not None:
+                    refund_meta["refund_eligible"] = False
+                    refund_meta["refund_status_text"] = "Session running · Exit game before refunding"
+                game["refund_info"] = {
+                    **refund_meta,
+                    "playtime_minutes": int(lib_row["playtime_minutes"]),
+                    "order_id": int(oi_row["order_id"]) if oi_row else None,
+                    "purchased_at": serialize_row(oi_row)["purchased_at"] if oi_row else None,
+                }
             cur.execute(
                 "SELECT 1 FROM WISHLIST WHERE user_id = %s AND game_id = %s",
                 (int(user_id), game_id),
@@ -612,8 +814,14 @@ def user_library(user_id):
     with db_cursor() as (_, cur):
         cur.execute(
             """
-            SELECT ul.user_id, ul.game_id, ul.acquired_at, ul.playtime_minutes, ul.last_played_at,
+            SELECT ul.user_id, ul.game_id, ul.acquired_at,
+                   ul.playtime_minutes, ul.playtime_seconds, ul.last_played_at,
+                   ul.active_session_started_at,
+                   EXTRACT(EPOCH FROM (NOW() - ul.active_session_started_at))::bigint AS active_session_elapsed_seconds,
+                   ul.last_session_started_at, ul.last_session_ended_at, ul.last_session_seconds,
                    g.title, g.description, g.age_rating, p.name AS publisher_name, d.name AS developer_name,
+                   latest_oi.order_id, latest_oi.order_item_id, latest_oi.price_at_purchase,
+                   latest_oi.purchased_at, latest_oi.seconds_since_purchase,
                    (SELECT COUNT(*) FROM ACHIEVEMENTS a WHERE a.game_id = g.game_id) AS total_achievements,
                    (SELECT COUNT(*) FROM USER_ACHIEVEMENTS ua
                     JOIN ACHIEVEMENTS a ON a.achievement_id = ua.achievement_id
@@ -622,12 +830,121 @@ def user_library(user_id):
             JOIN GAMES g ON g.game_id = ul.game_id
             JOIN PUBLISHERS p ON p.publisher_id = g.publisher_id
             JOIN DEVELOPERS d ON d.developer_id = g.developer_id
+            LEFT JOIN (
+                SELECT oi.order_item_id, oi.order_id, oi.game_id, oi.price_at_purchase,
+                       o.created_at AS purchased_at,
+                       EXTRACT(EPOCH FROM (NOW() - o.created_at))::bigint AS seconds_since_purchase,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY o.user_id, oi.game_id
+                           ORDER BY o.created_at DESC, oi.order_item_id DESC
+                       ) AS rn
+                FROM ORDER_ITEMS oi
+                JOIN ORDERS o ON o.order_id = oi.order_id
+                WHERE o.user_id = %s AND oi.status = 'purchased'
+            ) latest_oi ON latest_oi.game_id = ul.game_id AND latest_oi.rn = 1
             WHERE ul.user_id = %s
-            ORDER BY ul.last_played_at DESC NULLS LAST, ul.acquired_at DESC
+            ORDER BY (ul.active_session_started_at IS NOT NULL) DESC,
+                     ul.last_played_at DESC NULLS LAST, ul.acquired_at DESC
             """,
-            (uid,),
+            (uid, uid),
         )
-        return jsonify(serialize_rows(cur.fetchall()))
+        rows = serialize_rows(cur.fetchall())
+        for r in rows:
+            r["playtime_seconds"] = max(int(r.get("playtime_seconds") or 0), int(r.get("playtime_minutes") or 0) * 60)
+            r.update(
+                _evaluate_refund_eligibility(
+                    r.get("playtime_minutes"),
+                    r.get("price_at_purchase"),
+                    r.get("seconds_since_purchase"),
+                )
+            )
+            if r.get("active_session_started_at"):
+                r["refund_eligible"] = False
+                r["refund_status_text"] = "Session running · Exit game before refunding"
+        return jsonify(rows)
+
+
+@app.route("/api/users/<int:user_id>/library/<int:game_id>/play/start", methods=["POST"])
+def start_play_session(user_id, game_id):
+    uid, err = _require_auth(user_id)
+    if err:
+        return err
+    with db_cursor(commit=True) as (_, cur):
+        cur.execute(
+            "SELECT active_session_started_at FROM USER_LIBRARY "
+            "WHERE user_id = %s AND game_id = %s FOR UPDATE",
+            (uid, game_id),
+        )
+        lib = cur.fetchone()
+        if not lib:
+            return _error("Game not found in user library.", 404)
+        if lib["active_session_started_at"] is not None:
+            started_str = serialize_row(lib)["active_session_started_at"]
+            return _error(f"Game session is already running (started at {started_str}).", 400)
+
+        cur.execute(
+            "UPDATE USER_LIBRARY SET active_session_started_at = NOW(), last_played_at = NOW() "
+            "WHERE user_id = %s AND game_id = %s",
+            (uid, game_id),
+        )
+        cur.execute(
+            "SELECT user_id, game_id, active_session_started_at, last_played_at "
+            "FROM USER_LIBRARY WHERE user_id = %s AND game_id = %s",
+            (uid, game_id),
+        )
+        row = serialize_row(cur.fetchone())
+        row["started"] = True
+        return jsonify(row)
+
+
+@app.route("/api/users/<int:user_id>/library/<int:game_id>/play/exit", methods=["POST"])
+def exit_play_session(user_id, game_id):
+    uid, err = _require_auth(user_id)
+    if err:
+        return err
+    with db_cursor(commit=True) as (_, cur):
+        cur.execute(
+            """
+            SELECT playtime_minutes, playtime_seconds, active_session_started_at,
+                   EXTRACT(EPOCH FROM (NOW() - active_session_started_at))::bigint AS elapsed_seconds
+            FROM USER_LIBRARY
+            WHERE user_id = %s AND game_id = %s
+            FOR UPDATE
+            """,
+            (uid, game_id),
+        )
+        lib = cur.fetchone()
+        if not lib:
+            return _error("Game not found in user library.", 404)
+        if lib["active_session_started_at"] is None:
+            return _error("No active play session to exit.", 400)
+
+        elapsed = max(1, int(lib["elapsed_seconds"] or 0))
+        base_seconds = max(int(lib["playtime_seconds"] or 0), int(lib["playtime_minutes"] or 0) * 60)
+        new_total_seconds = base_seconds + elapsed
+        new_total_minutes = new_total_seconds // 60
+
+        cur.execute(
+            """
+            UPDATE USER_LIBRARY
+            SET playtime_seconds = %s,
+                playtime_minutes = %s,
+                last_session_started_at = active_session_started_at,
+                last_session_ended_at = NOW(),
+                last_session_seconds = %s,
+                last_played_at = NOW(),
+                active_session_started_at = NULL
+            WHERE user_id = %s AND game_id = %s
+            """,
+            (new_total_seconds, new_total_minutes, elapsed, uid, game_id),
+        )
+        cur.execute(
+            "SELECT * FROM USER_LIBRARY WHERE user_id = %s AND game_id = %s",
+            (uid, game_id),
+        )
+        row = serialize_row(cur.fetchone())
+        row["exited"] = True
+        return jsonify(row)
 
 
 @app.route("/api/users/<int:user_id>/library/<int:game_id>/play", methods=["POST"])
@@ -641,17 +958,143 @@ def record_playtime(user_id, game_id):
         return _error("Playtime minutes must be positive.")
     with db_cursor(commit=True) as (_, cur):
         cur.execute(
-            "UPDATE USER_LIBRARY SET playtime_minutes = playtime_minutes + %s, last_played_at = NOW() "
-            "WHERE user_id = %s AND game_id = %s",
-            (minutes, uid, game_id),
+            "SELECT playtime_minutes, playtime_seconds FROM USER_LIBRARY "
+            "WHERE user_id = %s AND game_id = %s FOR UPDATE",
+            (uid, game_id),
         )
-        if cur.rowcount == 0:
+        lib = cur.fetchone()
+        if not lib:
             return _error("Game not found in user library.", 404)
+        base_seconds = max(int(lib["playtime_seconds"] or 0), int(lib["playtime_minutes"] or 0) * 60)
+        new_total_seconds = base_seconds + (minutes * 60)
+        new_total_minutes = new_total_seconds // 60
+        cur.execute(
+            "UPDATE USER_LIBRARY SET playtime_seconds = %s, playtime_minutes = %s, last_played_at = NOW() "
+            "WHERE user_id = %s AND game_id = %s",
+            (new_total_seconds, new_total_minutes, uid, game_id),
+        )
         cur.execute(
             "SELECT * FROM USER_LIBRARY WHERE user_id = %s AND game_id = %s",
             (uid, game_id),
         )
         return jsonify(serialize_row(cur.fetchone()))
+
+
+@app.route("/api/users/<int:user_id>/library/<int:game_id>/refund", methods=["POST"])
+def refund_game(user_id, game_id):
+    uid, err = _require_auth(user_id)
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    reason = (data.get("reason") or "Requested by player").strip()[:255] or "Requested by player"
+
+    with db_cursor(commit=True) as (_, cur):
+        cur.execute("SELECT user_id, role, wallet_balance FROM USERS WHERE user_id = %s FOR UPDATE", (uid,))
+        user = cur.fetchone()
+        if not user:
+            return _error("User not found.", 404)
+        if user["role"] != "user":
+            return _error("Only User accounts can refund purchases.", 403)
+
+        cur.execute(
+            "SELECT user_id, game_id, playtime_minutes, acquired_at, active_session_started_at "
+            "FROM USER_LIBRARY WHERE user_id = %s AND game_id = %s FOR UPDATE",
+            (uid, game_id),
+        )
+        lib = cur.fetchone()
+        if not lib:
+            return _error("Game not found in your library.", 404)
+        if lib["active_session_started_at"] is not None:
+            return _error("Please exit the active game session before requesting a refund.", 400)
+
+        cur.execute(
+            """
+            SELECT oi.order_item_id, oi.order_id, oi.price_at_purchase, oi.status,
+                   o.created_at AS purchased_at,
+                   EXTRACT(EPOCH FROM (NOW() - o.created_at))::bigint AS seconds_since_purchase,
+                   g.title AS game_title
+            FROM ORDER_ITEMS oi
+            JOIN ORDERS o ON o.order_id = oi.order_id
+            JOIN GAMES g ON g.game_id = oi.game_id
+            WHERE o.user_id = %s AND oi.game_id = %s AND oi.status = 'purchased'
+            ORDER BY o.created_at DESC, oi.order_item_id DESC
+            LIMIT 1
+            FOR UPDATE
+            """,
+            (uid, game_id),
+        )
+        item = cur.fetchone()
+        if not item:
+            return _error("No refundable paid purchase found for this game.", 400)
+
+        refund_amount = Decimal(str(item["price_at_purchase"]))
+        if refund_amount <= 0:
+            return _error("Free titles cannot be refunded.", 400)
+
+        playtime = int(lib["playtime_minutes"] or 0)
+        if playtime >= REFUND_MAX_PLAYTIME_MINUTES:
+            return _error(
+                f"Refund ineligible under Steam 2-hour policy: {playtime}m played (must be under {REFUND_MAX_PLAYTIME_MINUTES} minutes / 2 hours).",
+                400,
+            )
+
+        elapsed_sec = int(item["seconds_since_purchase"] or 0)
+        if elapsed_sec > REFUND_MAX_SECONDS:
+            days_ago = elapsed_sec // 86400
+            return _error(
+                f"Refund ineligible under Steam policy: purchased {days_ago} days ago (must be within {REFUND_MAX_DAYS} days).",
+                400,
+            )
+
+        cur.execute(
+            "UPDATE ORDER_ITEMS SET status = 'refunded', refunded_at = NOW(), refund_reason = %s "
+            "WHERE order_item_id = %s",
+            (reason, item["order_item_id"]),
+        )
+        cur.execute(
+            "SELECT COUNT(*) AS remaining FROM ORDER_ITEMS WHERE order_id = %s AND status = 'purchased'",
+            (item["order_id"],),
+        )
+        remaining = int(cur.fetchone()["remaining"])
+        new_order_status = "refunded" if remaining == 0 else "partially_refunded"
+        cur.execute(
+            "UPDATE ORDERS SET status = %s WHERE order_id = %s",
+            (new_order_status, item["order_id"]),
+        )
+        region = _resolve_active_region(cur)
+        rate = Decimal(str(region["rate_from_inr"]))
+        minor_units = int(region["minor_units"])
+        curr_code = region["currency_code"]
+        display_refund = _convert_from_inr(refund_amount, rate, minor_units)
+
+        cur.execute(
+            "UPDATE USERS SET wallet_balance = wallet_balance + %s WHERE user_id = %s",
+            (refund_amount, uid),
+        )
+        cur.execute(
+            "INSERT INTO WALLET_TRANSACTIONS "
+            "(user_id, amount, currency_code, exchange_rate_used, display_amount, txn_type, reference_order_id) "
+            "VALUES (%s, %s, %s, %s, %s, 'refund', %s)",
+            (uid, refund_amount, curr_code, rate, display_refund, item["order_id"]),
+        )
+        cur.execute(
+            "DELETE FROM USER_LIBRARY WHERE user_id = %s AND game_id = %s",
+            (uid, game_id),
+        )
+
+        new_balance = Decimal(str(user["wallet_balance"])) + refund_amount
+        return jsonify({
+            "refunded": True,
+            "game_id": game_id,
+            "game_title": item["game_title"],
+            "order_id": int(item["order_id"]),
+            "order_item_id": int(item["order_item_id"]),
+            "refund_amount": float(refund_amount),
+            "display_refund_amount": float(display_refund),
+            "currency_code": curr_code,
+            "wallet_balance": float(new_balance),
+            "order_status": new_order_status,
+        })
 
 
 @app.route("/api/users/<int:user_id>/achievements/<int:achievement_id>/unlock", methods=["POST"])
@@ -753,23 +1196,42 @@ def deposit_wallet(user_id):
     if err:
         return err
     data = request.get_json(force=True) or {}
-    amount = Decimal(str(data.get("amount") or 0))
-    if amount <= 0:
+    raw_amount = Decimal(str(data.get("amount") or 0))
+    if raw_amount <= 0:
         return _error("Deposit amount must be greater than zero.")
     with db_cursor(commit=True) as (_, cur):
+        region = _resolve_active_region(cur)
+        rate = Decimal(str(region["rate_from_inr"]))
+        minor_units = int(region["minor_units"])
+        curr_code = region["currency_code"]
+
+        if data.get("input_in_active_currency"):
+            display_amount = raw_amount
+            inr_amount = _convert_to_inr(raw_amount, rate)
+        else:
+            inr_amount = raw_amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            display_amount = _convert_from_inr(inr_amount, rate, minor_units)
+
+        if inr_amount <= 0:
+            return _error("Deposit amount is too small after currency conversion.")
+
         cur.execute(
             "UPDATE USERS SET wallet_balance = wallet_balance + %s WHERE user_id = %s",
-            (amount, uid),
+            (inr_amount, uid),
         )
         if cur.rowcount == 0:
             return _error("User not found.", 404)
         cur.execute(
-            "INSERT INTO WALLET_TRANSACTIONS (user_id, amount, txn_type, reference_order_id) "
-            "VALUES (%s, %s, 'deposit', NULL)",
-            (uid, amount),
+            "INSERT INTO WALLET_TRANSACTIONS "
+            "(user_id, amount, currency_code, exchange_rate_used, display_amount, txn_type, reference_order_id) "
+            "VALUES (%s, %s, %s, %s, %s, 'deposit', NULL)",
+            (uid, inr_amount, curr_code, rate, display_amount),
         )
         cur.execute("SELECT wallet_balance FROM USERS WHERE user_id = %s", (uid,))
         row = serialize_row(cur.fetchone())
+        row["deposited_inr"] = float(inr_amount)
+        row["deposited_display_amount"] = float(display_amount)
+        row["currency_code"] = curr_code
         return jsonify(row)
 
 
@@ -785,6 +1247,12 @@ def checkout(user_id):
         return _error("Select at least one game to purchase.")
 
     with db_cursor(commit=True) as (_, cur):
+        region = _resolve_active_region(cur)
+        rate = Decimal(str(region["rate_from_inr"]))
+        minor_units = int(region["minor_units"])
+        curr_code = region["currency_code"]
+        symbol = region["symbol"]
+
         cur.execute("SELECT user_id, wallet_balance FROM USERS WHERE user_id = %s FOR UPDATE", (uid,))
         user = cur.fetchone()
         if not user:
@@ -814,16 +1282,20 @@ def checkout(user_id):
 
         line_items = []
         total = Decimal("0.00")
+        display_total = Decimal("0.00")
         for g in games:
             eff = Decimal(str(_compute_effective_price(g["base_price"], g["discount_pct"])))
+            disp_eff = _convert_from_inr(eff, rate, minor_units)
             total += eff
-            line_items.append((g["game_id"], eff))
+            display_total += disp_eff
+            line_items.append((g["game_id"], eff, disp_eff))
 
         current_balance = Decimal(str(user["wallet_balance"]))
         if total > 0:
             if current_balance < total:
+                disp_bal = _convert_from_inr(current_balance, rate, minor_units)
                 return _error(
-                    f"Insufficient Wallet balance (₹{float(current_balance):.2f} < ₹{float(total):.2f})."
+                    f"Insufficient Wallet balance ({_format_currency_text(disp_bal, symbol, minor_units)} < {_format_currency_text(display_total, symbol, minor_units)})."
                 )
             cur.execute(
                 "UPDATE USERS SET wallet_balance = wallet_balance - %s WHERE user_id = %s",
@@ -832,34 +1304,39 @@ def checkout(user_id):
         new_balance = current_balance - total
 
         cur.execute(
-            "INSERT INTO ORDERS (user_id, total_amount, payment_method, status) "
-            "VALUES (%s, %s, %s, 'completed') RETURNING order_id",
-            (uid, total, "SAUNA Wallet"),
+            "INSERT INTO ORDERS "
+            "(user_id, total_amount, currency_code, exchange_rate_used, display_total_amount, payment_method, status) "
+            "VALUES (%s, %s, %s, %s, %s, %s, 'completed') RETURNING order_id",
+            (uid, total, curr_code, rate, display_total, "SAUNA Wallet"),
         )
         order_id = cur.fetchone()["order_id"]
 
-        for gid, price in line_items:
+        for gid, price, disp_price in line_items:
             cur.execute(
-                "INSERT INTO ORDER_ITEMS (order_id, game_id, price_at_purchase) VALUES (%s, %s, %s)",
-                (order_id, gid, price),
+                "INSERT INTO ORDER_ITEMS (order_id, game_id, price_at_purchase, display_price_at_purchase) "
+                "VALUES (%s, %s, %s, %s)",
+                (order_id, gid, price, disp_price),
             )
             cur.execute(
-                "INSERT INTO USER_LIBRARY (user_id, game_id, acquired_at, playtime_minutes) "
-                "VALUES (%s, %s, NOW(), 0)",
+                "INSERT INTO USER_LIBRARY (user_id, game_id, acquired_at, playtime_minutes, playtime_seconds) "
+                "VALUES (%s, %s, NOW(), 0, 0)",
                 (uid, gid),
             )
             cur.execute("DELETE FROM WISHLIST WHERE user_id = %s AND game_id = %s", (uid, gid))
 
         if total > 0:
             cur.execute(
-                "INSERT INTO WALLET_TRANSACTIONS (user_id, amount, txn_type, reference_order_id) "
-                "VALUES (%s, %s, 'purchase', %s)",
-                (uid, -total, order_id),
+                "INSERT INTO WALLET_TRANSACTIONS "
+                "(user_id, amount, currency_code, exchange_rate_used, display_amount, txn_type, reference_order_id) "
+                "VALUES (%s, %s, %s, %s, %s, 'purchase', %s)",
+                (uid, -total, curr_code, rate, -display_total, order_id),
             )
 
         return jsonify({
             "order_id": order_id,
             "total_amount": float(total),
+            "display_total_amount": float(display_total),
+            "currency_code": curr_code,
             "wallet_balance": float(new_balance),
             "games_purchased": len(line_items),
         }), 201
@@ -872,13 +1349,26 @@ def user_orders(user_id):
         return err
     with db_cursor() as (_, cur):
         cur.execute(
-            "SELECT * FROM ORDERS WHERE user_id = %s ORDER BY created_at DESC, order_id DESC",
+            """
+            SELECT o.*, c.symbol AS currency_symbol, c.minor_units,
+                   EXTRACT(EPOCH FROM (NOW() - o.created_at))::bigint AS seconds_since_purchase
+            FROM ORDERS o
+            LEFT JOIN CURRENCIES c ON c.currency_code = o.currency_code
+            WHERE o.user_id = %s
+            ORDER BY o.created_at DESC, o.order_id DESC
+            """,
             (uid,),
         )
         orders = serialize_rows(cur.fetchall())
         if not orders:
             return jsonify([])
-        order_ids = [o["order_id"] for o in orders]
+        cur.execute(
+            "SELECT game_id, playtime_minutes FROM USER_LIBRARY WHERE user_id = %s",
+            (uid,),
+        )
+        lib_playtime = {r["game_id"]: int(r["playtime_minutes"]) for r in cur.fetchall()}
+        order_by_id = {o["order_id"]: o for o in orders}
+        order_ids = list(order_by_id.keys())
         placeholders = ",".join(["%s"] * len(order_ids))
         cur.execute(
             f"SELECT oi.*, g.title FROM ORDER_ITEMS oi JOIN GAMES g ON g.game_id = oi.game_id "
@@ -887,6 +1377,23 @@ def user_orders(user_id):
         )
         items_by_order = {}
         for item in serialize_rows(cur.fetchall()):
+            parent_order = order_by_id[item["order_id"]]
+            item["currency_code"] = parent_order.get("currency_code") or "INR"
+            item["currency_symbol"] = parent_order.get("currency_symbol") or "₹"
+            item["minor_units"] = int(parent_order.get("minor_units") if parent_order.get("minor_units") is not None else 2)
+            if item.get("status") == "purchased" and item["game_id"] in lib_playtime:
+                playtime = lib_playtime[item["game_id"]]
+                item["playtime_minutes"] = playtime
+                item.update(
+                    _evaluate_refund_eligibility(
+                        playtime,
+                        item["price_at_purchase"],
+                        parent_order["seconds_since_purchase"],
+                    )
+                )
+            else:
+                item["refund_eligible"] = False
+                item["refund_status_text"] = None
             items_by_order.setdefault(item["order_id"], []).append(item)
         for o in orders:
             o["items"] = items_by_order.get(o["order_id"], [])
@@ -900,8 +1407,13 @@ def user_wallet_transactions(user_id):
         return err
     with db_cursor() as (_, cur):
         cur.execute(
-            "SELECT * FROM WALLET_TRANSACTIONS WHERE user_id = %s "
-            "ORDER BY created_at DESC, txn_id DESC",
+            """
+            SELECT wt.*, c.symbol AS currency_symbol, c.minor_units
+            FROM WALLET_TRANSACTIONS wt
+            LEFT JOIN CURRENCIES c ON c.currency_code = wt.currency_code
+            WHERE wt.user_id = %s
+            ORDER BY wt.created_at DESC, wt.txn_id DESC
+            """,
             (uid,),
         )
         return jsonify(serialize_rows(cur.fetchall()))
@@ -1075,12 +1587,18 @@ def get_meta():
             "ORDER BY si.sale_id DESC, g.title"
         )
         sale_items = serialize_rows(cur.fetchall())
+        cur.execute("SELECT * FROM CURRENCIES ORDER BY currency_code")
+        currencies = serialize_rows(cur.fetchall())
+        cur.execute(_region_select_sql() + "ORDER BY r.country_name")
+        regions = serialize_rows(cur.fetchall())
         return jsonify({
             "publishers": publishers,
             "developers": developers,
             "tags": tags,
             "sales": sales,
             "sale_items": sale_items,
+            "currencies": currencies,
+            "regions": regions,
         })
 
 

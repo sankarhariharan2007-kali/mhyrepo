@@ -30,6 +30,22 @@
       </nav>
 
       <div class="user-controls">
+        <div class="region-picker-wrap">
+          <button type="button" class="region-btn" id="regionPickerBtn" title="Choose Country &amp; Store Currency">
+            <span class="region-code-pill" id="activeCountryCode">IN</span>
+            <span id="activeRegionLabel">India · ₹ INR</span>
+            <span aria-hidden="true">▾</span>
+          </button>
+          <div id="regionDialog" class="region-popover hidden" role="dialog" aria-label="Choose Country and Currency">
+            <div class="region-popover-head">
+              <strong>Country &amp; Currency</strong>
+              <button type="button" class="region-popover-close" id="closeRegionDialogBtn" aria-label="Close">&times;</button>
+            </div>
+            <input type="text" id="regionSearchInput" class="input region-search" placeholder="Search country or currency (e.g. Japan, JPY)..." />
+            <div id="regionOptionsList" class="region-options-list"></div>
+          </div>
+        </div>
+
         <button class="cart-btn user-only-nav" id="openCartBtn" title="View Shopping Cart">
           Cart <span class="badge accent-bg" id="cartCount">0</span>
         </button>
@@ -107,7 +123,7 @@
       <div class="section-header">
         <div>
           <h2>Your Game Library</h2>
-          <p class="muted">Launch games from your library to track playtime and unlock achievements.</p>
+          <p class="muted">Launch games to track playtime &amp; unlock achievements. Steam Refund Policy: full wallet refund for titles played under 2 hours (&lt;120m) within 14 days of purchase.</p>
         </div>
       </div>
       <div id="libraryList" class="stack-list"></div>
@@ -347,6 +363,32 @@
     </div>
   </div>
 
+  <!-- REFUND MODAL -->
+  <div id="refundModal" class="modal hidden">
+    <div class="modal-backdrop" data-close="refundModal"></div>
+    <div class="modal-dialog">
+      <button class="modal-close" data-close="refundModal">&times;</button>
+      <h3>Request Game Refund</h3>
+      <div class="refund-policy-box mt-sm">
+        <strong>Steam 2-Hour Refund Policy:</strong> Purchases are eligible for a full SAUNA Wallet refund within <strong>14 days</strong> of purchase with <strong>less than 2 hours (120 minutes)</strong> of playtime.
+      </div>
+      <div id="refundSummaryBox" class="refund-summary-grid mt-md"></div>
+      <form id="refundForm" class="form-stack mt-md">
+        <label class="small muted" for="refundReasonSelect">Reason for refund</label>
+        <select name="reason" id="refundReasonSelect" class="input">
+          <option value="Requested by player">It's not fun / didn't match expectations</option>
+          <option value="Purchased by accident">Purchased by accident</option>
+          <option value="Technical or performance issues">Technical or performance issues</option>
+          <option value="Found a better edition or sale">Found a better edition or sale</option>
+        </select>
+        <div class="card-actions mt-sm" style="justify-content:flex-end;">
+          <button type="button" class="btn btn-ghost" data-close="refundModal">Cancel</button>
+          <button type="submit" class="btn btn-danger" id="confirmRefundBtn">Confirm Refund</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- LOGIN MODAL -->
   <div id="loginModal" class="modal hidden">
     <div class="modal-backdrop" data-close="loginModal"></div>
@@ -390,10 +432,10 @@
         <input type="text" name="username" class="input" placeholder="Username" required />
         <input type="email" name="email" class="input" placeholder="Email" required />
         <input type="password" name="password" class="input" placeholder="Password (min 4 chars)" required />
-        <input type="text" name="country" class="input" placeholder="Country" value="India" />
+        <select name="region_id" id="registerRegionSelect" class="input" required></select>
 
         <div id="registerUserFields">
-          <input type="number" step="0.01" min="0" name="wallet_balance" class="input" placeholder="Initial Wallet Balance (₹)" value="5000.00" />
+          <input type="number" step="0.01" min="0" name="wallet_balance" id="registerWalletInput" class="input" placeholder="Initial Wallet Balance (₹ INR)" value="5000.00" />
         </div>
 
         <div id="registerPublisherFields" class="form-stack hidden">
