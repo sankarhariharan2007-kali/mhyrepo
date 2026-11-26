@@ -4,12 +4,25 @@ from contextlib import contextmanager
 from decimal import Decimal
 from flask import Flask, jsonify, render_template, request, session
 from werkzeug.security import check_password_hash, generate_password_hash
-import pymysql
+import psycopg2
+import psycopg2.errors
 
 from db import get_connection, serialize_row, serialize_rows
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SAUNA_SECRET_KEY", "sauna-session-secret-2026")
+_secret = os.environ.get("SAUNA_SECRET_KEY") or os.environ.get("FERRO_SECRET_KEY")
+if not _secret and os.environ.get("RENDER"):
+    # With a public default key anyone could forge an admin session cookie.
+    raise RuntimeError("Set SAUNA_SECRET_KEY to a long random string in the Environment page.")
+app.secret_key = _secret or "sauna-local-dev-only"
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=(
+        os.environ.get("SAUNA_COOKIE_SECURE") or os.environ.get("FERRO_COOKIE_SECURE")
+    ) == "1",
+)
+ENABLE_SQL_EXPLORER = os.environ.get("ENABLE_SQL_EXPLORER", "1") == "1"
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 
 ALLOWED_TABLES = {
@@ -92,20 +105,35 @@ def _compute_effective_price(base_price, discount_pct):
 
 def _active_discount_subquery():
     return """
-        SELECT si.game_id, MAX(si.discount_pct) AS discount_pct,
-               SUBSTRING_INDEX(GROUP_CONCAT(s.title ORDER BY si.discount_pct DESC SEPARATOR '||'), '||', 1) AS sale_title
-        FROM SALE_ITEMS si
-        JOIN SALES s ON s.sale_id = si.sale_id
+        SELECT DISTINCT ON (si.game_id)
+               si.game_id, si.discount_pct, s.title AS sale_title
+        FROM sale_items si
+        JOIN sales s ON s.sale_id = si.sale_id
         WHERE NOW() BETWEEN s.start_date AND s.end_date
-        GROUP BY si.game_id
+        ORDER BY si.game_id, si.discount_pct DESC
     """
 
 
-@app.errorhandler(pymysql.MySQLError)
-def handle_mysql_error(err):
-    code = err.args[0] if err.args else 500
-    msg = err.args[1] if len(err.args) > 1 else str(err)
-    return jsonify({"error": f"Database error ({code}): {msg}"}), 400
+@app.errorhandler(psycopg2.Error)
+def handle_db_error(err):
+    diag = getattr(err, "diag", None)
+    msg = (diag.message_primary if diag and diag.message_primary else str(err)).strip()
+    if isinstance(err, psycopg2.errors.UniqueViolation):
+        msg = "That value already exists (duplicate)."
+    elif isinstance(err, psycopg2.errors.ForeignKeyViolation):
+        msg = "Referenced record does not exist or is still in use."
+    elif isinstance(err, psycopg2.errors.CheckViolation):
+        msg = "A value violates a data constraint."
+    status = 503 if isinstance(err, psycopg2.OperationalError) else 400
+    return jsonify({"error": f"Database error: {msg}"}), status
+
+
+@app.route("/healthz")
+def healthz():
+    with db_cursor() as (_, cur):
+        cur.execute("SELECT 1 AS ok")
+        cur.fetchone()
+    return jsonify({"status": "ok"})
 
 
 @app.route("/")
@@ -195,17 +223,15 @@ def auth_register():
                 return _error("Publisher / Studio Name is required for Publisher registration.")
             founded_year = data.get("founded_year") or None
             website = (data.get("website") or "").strip() or None
-            cur.execute("SELECT publisher_id, name FROM PUBLISHERS WHERE name = %s", (publisher_name,))
-            existing_pub = cur.fetchone()
-            if existing_pub:
-                publisher_id = int(existing_pub["publisher_id"])
-                publisher_name = existing_pub["name"]
-            else:
-                cur.execute(
-                    "INSERT INTO PUBLISHERS (name, country, founded_year, website) VALUES (%s, %s, %s, %s)",
-                    (publisher_name, country, founded_year, website),
-                )
-                publisher_id = cur.lastrowid
+            cur.execute("SELECT 1 FROM PUBLISHERS WHERE LOWER(name) = LOWER(%s)", (publisher_name,))
+            if cur.fetchone():
+                return _error("A studio with this name already exists. Choose a different studio name.", 409)
+            cur.execute(
+                "INSERT INTO PUBLISHERS (name, country, founded_year, website) "
+                "VALUES (%s, %s, %s, %s) RETURNING publisher_id",
+                (publisher_name, country, founded_year, website),
+            )
+            publisher_id = cur.fetchone()["publisher_id"]
         else:
             wallet = float(data.get("wallet_balance") or 0)
             if wallet < 0:
@@ -213,10 +239,10 @@ def auth_register():
 
         cur.execute(
             "INSERT INTO USERS (username, email, password_hash, role, publisher_id, wallet_balance, country) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING user_id",
             (username, email, pw_hash, account_type, publisher_id, wallet, country),
         )
-        user_id = cur.lastrowid
+        user_id = cur.fetchone()["user_id"]
         if account_type == "user" and wallet > 0:
             cur.execute(
                 "INSERT INTO WALLET_TRANSACTIONS (user_id, amount, txn_type, reference_order_id) "
@@ -351,7 +377,7 @@ def list_games():
     conditions = []
     params = []
     if q:
-        conditions.append("(g.title LIKE %s OR g.description LIKE %s)")
+        conditions.append("(g.title ILIKE %s OR g.description ILIKE %s)")
         like = f"%{q}%"
         params.extend([like, like])
     if tag_id:
@@ -385,7 +411,7 @@ def list_games():
         LEFT JOIN ({_active_discount_subquery()}) sd ON sd.game_id = g.game_id
         LEFT JOIN (
             SELECT game_id, COUNT(*) AS review_count,
-                   SUM(CASE WHEN is_recommended = 1 THEN 1 ELSE 0 END) AS positive_count
+                   SUM(CASE WHEN is_recommended THEN 1 ELSE 0 END) AS positive_count
             FROM REVIEWS
             GROUP BY game_id
         ) rev ON rev.game_id = g.game_id
@@ -545,7 +571,7 @@ def create_game():
     with db_cursor(commit=True) as (_, cur):
         cur.execute(
             "INSERT INTO GAMES (title, description, release_date, base_price, publisher_id, developer_id, age_rating) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING game_id",
             (
                 title,
                 data.get("description") or "",
@@ -556,9 +582,9 @@ def create_game():
                 data.get("age_rating") or "Everyone",
             ),
         )
-        game_id = cur.lastrowid
+        game_id = cur.fetchone()["game_id"]
         for tid in tag_ids:
-            cur.execute("INSERT IGNORE INTO GAME_TAGS (game_id, tag_id) VALUES (%s, %s)", (game_id, int(tid)))
+            cur.execute("INSERT INTO GAME_TAGS (game_id, tag_id) VALUES (%s, %s) ON CONFLICT DO NOTHING", (game_id, int(tid)))
         cur.execute("SELECT * FROM GAMES WHERE game_id = %s", (game_id,))
         return jsonify(serialize_row(cur.fetchone())), 201
 
@@ -597,7 +623,7 @@ def user_library(user_id):
             JOIN PUBLISHERS p ON p.publisher_id = g.publisher_id
             JOIN DEVELOPERS d ON d.developer_id = g.developer_id
             WHERE ul.user_id = %s
-            ORDER BY ul.last_played_at DESC, ul.acquired_at DESC
+            ORDER BY ul.last_played_at DESC NULLS LAST, ul.acquired_at DESC
             """,
             (uid,),
         )
@@ -645,8 +671,8 @@ def unlock_achievement(user_id, achievement_id):
         if not cur.fetchone():
             return _error("User must own the game to unlock its achievements.")
         cur.execute(
-            "INSERT IGNORE INTO USER_ACHIEVEMENTS (user_id, achievement_id, unlocked_at) "
-            "VALUES (%s, %s, NOW())",
+            "INSERT INTO USER_ACHIEVEMENTS (user_id, achievement_id, unlocked_at) "
+            "VALUES (%s, %s, NOW()) ON CONFLICT DO NOTHING",
             (uid, achievement_id),
         )
         return jsonify({"unlocked": True, "achievement_id": achievement_id})
@@ -699,7 +725,7 @@ def add_wishlist(user_id):
         if cur.fetchone():
             return _error("You already own this game.")
         cur.execute(
-            "INSERT IGNORE INTO WISHLIST (user_id, game_id, added_at) VALUES (%s, %s, NOW())",
+            "INSERT INTO WISHLIST (user_id, game_id, added_at) VALUES (%s, %s, NOW()) ON CONFLICT DO NOTHING",
             (uid, int(game_id)),
         )
         return jsonify({"added": True, "game_id": int(game_id)}), 201
@@ -807,10 +833,10 @@ def checkout(user_id):
 
         cur.execute(
             "INSERT INTO ORDERS (user_id, total_amount, payment_method, status) "
-            "VALUES (%s, %s, %s, 'completed')",
+            "VALUES (%s, %s, %s, 'completed') RETURNING order_id",
             (uid, total, "SAUNA Wallet"),
         )
-        order_id = cur.lastrowid
+        order_id = cur.fetchone()["order_id"]
 
         for gid, price in line_items:
             cur.execute(
@@ -908,10 +934,10 @@ def create_review(game_id):
             """
             INSERT INTO REVIEWS (user_id, game_id, is_recommended, review_text, playtime_at_review, helpful_votes)
             VALUES (%s, %s, %s, %s, %s, 0)
-            ON DUPLICATE KEY UPDATE
-                is_recommended = VALUES(is_recommended),
-                review_text = VALUES(review_text),
-                playtime_at_review = VALUES(playtime_at_review)
+            ON CONFLICT (user_id, game_id) DO UPDATE SET
+                is_recommended = EXCLUDED.is_recommended,
+                review_text = EXCLUDED.review_text,
+                playtime_at_review = EXCLUDED.playtime_at_review
             """,
             (uid, game_id, is_recommended, review_text, lib["playtime_minutes"]),
         )
@@ -1069,10 +1095,10 @@ def create_publisher():
         return _error("Publisher name is required.")
     with db_cursor(commit=True) as (_, cur):
         cur.execute(
-            "INSERT INTO PUBLISHERS (name, country, founded_year, website) VALUES (%s, %s, %s, %s)",
+            "INSERT INTO PUBLISHERS (name, country, founded_year, website) VALUES (%s, %s, %s, %s) RETURNING publisher_id",
             (name, data.get("country"), data.get("founded_year") or None, data.get("website")),
         )
-        return jsonify({"publisher_id": cur.lastrowid}), 201
+        return jsonify({"publisher_id": cur.fetchone()["publisher_id"]}), 201
 
 
 @app.route("/api/developers", methods=["POST"])
@@ -1086,10 +1112,10 @@ def create_developer():
         return _error("Developer name is required.")
     with db_cursor(commit=True) as (_, cur):
         cur.execute(
-            "INSERT INTO DEVELOPERS (name, country, website) VALUES (%s, %s, %s)",
+            "INSERT INTO DEVELOPERS (name, country, website) VALUES (%s, %s, %s) RETURNING developer_id",
             (name, data.get("country"), data.get("website")),
         )
-        return jsonify({"developer_id": cur.lastrowid}), 201
+        return jsonify({"developer_id": cur.fetchone()["developer_id"]}), 201
 
 
 @app.route("/api/tags", methods=["POST"])
@@ -1103,10 +1129,10 @@ def create_tag():
         return _error("Tag name is required.")
     with db_cursor(commit=True) as (_, cur):
         cur.execute(
-            "INSERT INTO TAGS (name, description) VALUES (%s, %s)",
+            "INSERT INTO TAGS (name, description) VALUES (%s, %s) RETURNING tag_id",
             (name, data.get("description") or ""),
         )
-        return jsonify({"tag_id": cur.lastrowid}), 201
+        return jsonify({"tag_id": cur.fetchone()["tag_id"]}), 201
 
 
 @app.route("/api/sales", methods=["POST"])
@@ -1122,10 +1148,10 @@ def create_sale():
         return _error("Sale title, start_date, and end_date are required.")
     with db_cursor(commit=True) as (_, cur):
         cur.execute(
-            "INSERT INTO SALES (title, start_date, end_date) VALUES (%s, %s, %s)",
+            "INSERT INTO SALES (title, start_date, end_date) VALUES (%s, %s, %s) RETURNING sale_id",
             (title, start_date, end_date),
         )
-        return jsonify({"sale_id": cur.lastrowid}), 201
+        return jsonify({"sale_id": cur.fetchone()["sale_id"]}), 201
 
 
 @app.route("/api/sales/<int:sale_id>/items", methods=["POST"])
@@ -1145,7 +1171,7 @@ def add_sale_item(sale_id):
         cur.execute(
             """
             INSERT INTO SALE_ITEMS (sale_id, game_id, discount_pct) VALUES (%s, %s, %s)
-            ON DUPLICATE KEY UPDATE discount_pct = VALUES(discount_pct)
+            ON CONFLICT (sale_id, game_id) DO UPDATE SET discount_pct = EXCLUDED.discount_pct
             """,
             (sale_id, int(game_id), discount_pct),
         )
@@ -1167,14 +1193,14 @@ def create_achievement():
         if not cur.fetchone():
             return _error("You can only add achievements to games published by your studio.", 403)
         cur.execute(
-            "INSERT INTO ACHIEVEMENTS (game_id, name, description, is_hidden) VALUES (%s, %s, %s, %s)",
+            "INSERT INTO ACHIEVEMENTS (game_id, name, description, is_hidden) VALUES (%s, %s, %s, %s) RETURNING achievement_id",
             (int(game_id), name, data.get("description") or "", bool(data.get("is_hidden", False))),
         )
-        return jsonify({"achievement_id": cur.lastrowid}), 201
+        return jsonify({"achievement_id": cur.fetchone()["achievement_id"]}), 201
 
 
 # ---------------------------------------------------------------------------
-# MySQL Schema & Live SQL Explorer (All 17 ER Tables)
+# Schema & Live SQL Explorer (All 17 ER Tables)
 # ---------------------------------------------------------------------------
 @app.route("/api/db/tables", methods=["GET"])
 def list_db_tables():
@@ -1183,16 +1209,31 @@ def list_db_tables():
         return err
     with db_cursor() as (_, cur):
         tables = []
-        for tbl in sorted(ALLOWED_TABLES):
-            cur.execute(f"SELECT COUNT(*) AS cnt FROM `{tbl}`")
+        for tbl in sorted(ALLOWED_TABLES):  # whitelisted names only
+            cur.execute(f"SELECT COUNT(*) AS cnt FROM {tbl}")
             cnt = cur.fetchone()["cnt"]
             cur.execute(
-                "SELECT COLUMN_NAME AS column_name, COLUMN_TYPE AS column_type, "
-                "COLUMN_KEY AS column_key, IS_NULLABLE AS is_nullable "
-                "FROM information_schema.columns "
-                "WHERE table_schema = DATABASE() AND table_name = %s "
-                "ORDER BY ordinal_position",
-                (tbl,),
+                """
+                SELECT c.column_name,
+                       c.data_type AS column_type,
+                       CASE WHEN pk.column_name IS NOT NULL THEN 'PRI' ELSE '' END AS column_key,
+                       c.is_nullable
+                FROM information_schema.columns c
+                LEFT JOIN (
+                    SELECT kcu.column_name
+                    FROM information_schema.table_constraints tc
+                    JOIN information_schema.key_column_usage kcu
+                      ON kcu.constraint_name = tc.constraint_name
+                     AND kcu.table_schema = tc.table_schema
+                     AND kcu.table_name = tc.table_name
+                    WHERE tc.constraint_type = 'PRIMARY KEY'
+                      AND tc.table_schema = current_schema()
+                      AND tc.table_name = %s
+                ) pk ON pk.column_name = c.column_name
+                WHERE c.table_schema = current_schema() AND c.table_name = %s
+                ORDER BY c.ordinal_position
+                """,
+                (tbl, tbl),
             )
             cols = serialize_rows(cur.fetchall())
             tables.append({"table_name": tbl.upper(), "row_count": int(cnt), "columns": cols})
@@ -1218,9 +1259,9 @@ def inspect_table(table_name):
     tbl = table_name.lower()
     if tbl not in ALLOWED_TABLES:
         return _error("Unknown table name.", 404)
-    limit = min(int(request.args.get("limit", 100)), 500)
+    limit = max(1, min(request.args.get("limit", 100, type=int), 500))
     with db_cursor() as (_, cur):
-        cur.execute(f"SELECT * FROM `{tbl}` LIMIT %s", (limit,))
+        cur.execute(f"SELECT * FROM {tbl} LIMIT %s", (limit,))
         rows = _mask_admin_rows(
             serialize_rows(cur.fetchall()),
             mask_txn_amount=(tbl == "wallet_transactions"),
@@ -1229,33 +1270,64 @@ def inspect_table(table_name):
         return jsonify({"table_name": tbl.upper(), "columns": cols, "rows": rows})
 
 
+# Server-side functions, statistics views (they can hold sampled column values),
+# functions that run SQL hidden in a string, and escaped identifiers.
+_BLOCKED_SQL = re.compile(
+    r"pg_stat|\bpg_(read|ls|sleep|terminate|cancel|reload|file|logical|create|drop|advisory)\w*|"
+    r"\blo_(import|export|get|put)\w*|\bdblink\w*|\w+_to_xml\w*|\bts_(stat|rewrite)\b|"
+    r"\bcopy\b|\bset_config\b|\bcurrent_setting\b|\bu&",
+    re.I,
+)
+
+
 @app.route("/api/db/query", methods=["POST"])
 def run_readonly_query():
     _, err = _require_admin()
     if err:
         return err
+    if not ENABLE_SQL_EXPLORER:
+        return _error("SQL Explorer is disabled on this deployment.", 403)
     data = request.get_json(force=True) or {}
     sql = (data.get("sql") or "").strip()
     if not sql:
         return _error("SQL query cannot be empty.")
     stripped = re.sub(r"^\s*(--[^\n]*\n|/\*.*?\*/\s*)*", "", sql, flags=re.S).strip()
     first_kw = stripped.split(None, 1)[0].upper() if stripped else ""
-    if first_kw not in ("SELECT", "SHOW", "DESCRIBE", "DESC", "EXPLAIN", "WITH"):
-        return _error("SQL Explorer only allows read-only queries (SELECT, SHOW, DESCRIBE, EXPLAIN, WITH).")
-    if ";" in stripped[:-1]:
-        return _error("Only a single SQL statement is allowed per query.")
+    if first_kw not in ("SELECT", "EXPLAIN", "WITH", "TABLE", "VALUES"):
+        return _error("SQL Explorer only allows read-only queries (SELECT, WITH, EXPLAIN).")
+    if re.match(r"EXPLAIN\s+(\(.*?\)\s*)?ANALY[SZ]E", stripped, re.I):
+        return _error("EXPLAIN ANALYZE is not allowed.")
     if re.search(r"\b(wallet_balance|password_hash)\b", stripped, flags=re.I):
         return _error("Wallet balance and password hash are masked for Platform Admin.", 403)
+    if _BLOCKED_SQL.search(stripped):
+        return _error("This query uses restricted views or functions.", 403)
+    body = stripped.rstrip().rstrip(";")
+    # One statement only. This also guarantees the query cannot COMMIT the masking below.
+    if ";" in body:
+        return _error("Only a single SQL statement is allowed per query.")
 
-    with db_cursor() as (_, cur):
-        cur.execute(stripped)
-        mentions_wallet_txn = bool(re.search(r"\bwallet_transactions\b", stripped, flags=re.I))
-        rows = _mask_admin_rows(
-            serialize_rows(cur.fetchmany(200)),
-            mask_txn_amount=mentions_wallet_txn,
-        )
-        cols = [d[0] for d in cur.description] if cur.description else []
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL lock_timeout = 3000")
+            cur.execute("SET LOCAL statement_timeout = 5000")
+            # Overwrite private values inside this transaction only (always rolled
+            # back), so aliases, casts or row_to_json() cannot reveal them.
+            cur.execute("UPDATE users SET password_hash = '********', wallet_balance = 0")
+            cur.execute("UPDATE wallet_transactions SET amount = 0")
+            # From here PostgreSQL itself refuses every write.
+            cur.execute("SET TRANSACTION READ ONLY")
+            cur.execute(body)
+            mentions_wallet_txn = bool(re.search(r"\bwallet_transactions\b", stripped, flags=re.I))
+            rows = _mask_admin_rows(
+                serialize_rows(cur.fetchmany(200)),
+                mask_txn_amount=mentions_wallet_txn,
+            )
+            cols = [d[0] for d in cur.description] if cur.description else []
         return jsonify({"columns": cols, "rows": rows, "row_count": len(rows)})
+    finally:
+        conn.rollback()
+        conn.close()
 
 
 if __name__ == "__main__":

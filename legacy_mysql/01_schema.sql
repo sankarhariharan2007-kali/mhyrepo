@@ -52,9 +52,15 @@ CREATE TABLE IF NOT EXISTS USERS (
     username       VARCHAR(100) NOT NULL UNIQUE,
     email          VARCHAR(255) NOT NULL UNIQUE,
     password_hash  VARCHAR(255) NOT NULL,
+    role           VARCHAR(20) NOT NULL DEFAULT 'user',
+    publisher_id   INT NULL,
     wallet_balance DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
     country        VARCHAR(100),
     created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_users_publisher
+        FOREIGN KEY (publisher_id) REFERENCES PUBLISHERS(publisher_id)
+        ON UPDATE CASCADE ON DELETE SET NULL,
+    CONSTRAINT chk_users_role CHECK (role IN ('user', 'publisher', 'admin')),
     CONSTRAINT chk_users_wallet CHECK (wallet_balance >= 0)
 ) ENGINE=InnoDB;
 

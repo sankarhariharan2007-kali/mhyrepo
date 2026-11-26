@@ -1,9 +1,0 @@
-mysql_data/
-__pycache__/
-*.pyc
-*.pyo
-*.log
-*.pid
-*.sock
-.env
-.DS_Store

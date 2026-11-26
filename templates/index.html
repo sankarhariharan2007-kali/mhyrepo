@@ -279,10 +279,10 @@
               <div class="preset-btns">
                 <button class="btn-sm btn-ghost sql-preset" data-sql="SELECT g.title, g.base_price, si.discount_pct, ROUND(g.base_price * (100 - si.discount_pct)/100, 2) AS sale_price, s.title AS sale FROM GAMES g JOIN SALE_ITEMS si ON si.game_id = g.game_id JOIN SALES s ON s.sale_id = si.sale_id WHERE NOW() BETWEEN s.start_date AND s.end_date ORDER BY si.discount_pct DESC;">Active Sale Prices</button>
                 <button class="btn-sm btn-ghost sql-preset" data-sql="SELECT u.user_id, u.role, COUNT(ul.game_id) AS games_owned, COALESCE(SUM(ul.playtime_minutes),0) AS total_mins FROM USERS u LEFT JOIN USER_LIBRARY ul ON ul.user_id = u.user_id GROUP BY u.user_id ORDER BY total_mins DESC;">Top Players (By ID)</button>
-                <button class="btn-sm btn-ghost sql-preset" data-sql="SELECT g.title, COUNT(r.review_id) AS reviews, SUM(r.is_recommended) AS positive, SUM(r.helpful_votes) AS helpful FROM GAMES g LEFT JOIN REVIEWS r ON r.game_id = g.game_id GROUP BY g.game_id ORDER BY positive DESC;">Review Summary</button>
+                <button class="btn-sm btn-ghost sql-preset" data-sql="SELECT g.title, COUNT(r.review_id) AS reviews, SUM(CASE WHEN r.is_recommended THEN 1 ELSE 0 END) AS positive, SUM(r.helpful_votes) AS helpful FROM GAMES g LEFT JOIN REVIEWS r ON r.game_id = g.game_id GROUP BY g.game_id ORDER BY positive DESC;">Review Summary</button>
               </div>
             </div>
-            <textarea id="sqlInput" class="input sql-editor" rows="4">SHOW TABLES;</textarea>
+            <textarea id="sqlInput" class="input sql-editor" rows="4">SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name;</textarea>
             <div class="mt-sm">
               <button class="btn btn-primary" id="runSqlBtn">Run Query</button>
             </div>
