@@ -18,6 +18,9 @@ Defined in [`sql/01_schema.sql`](sql/01_schema.sql), seeded by [`sql/02_seed.sql
 - Publisher Studio: publish games, add discounts and achievements for your own catalog.
 - Admin-only Data Explorer with a read-only SQL runner. Password hashes, wallet balances and wallet transaction amounts are masked.
 
+## UPI payments
+Choosing **UPI** in the cart shows [`static/images/upi_qr.png`](static/images/upi_qr.png), and the payer types the amount shown. To change the account, replace the image and `UPI_LINK` in `static/js/app.js`. There is no payment gateway, so payments are **not verified**: no order is created and no games are added. Wallet checkout is unchanged.
+
 ## Holiday 2026 update
 [`sql/03_holiday_2026.sql`](sql/03_holiday_2026.sql) is applied once on boot to a database holding the demo data. It sets regular rupee prices (looked up 26 November 2026; they do not update by themselves), adds 12 games (24 in all) and starts the **Early Christmas Sale** (26 November to 31 December 2026, IST). The Christmas theme shows only while a sale with "Christmas" in its title is active.
 

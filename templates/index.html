@@ -327,10 +327,15 @@
       <div id="cartItemsWrap" class="stack-list mt-md"></div>
       <div class="cart-footer mt-lg">
         <div>
-          <label class="small muted">Payment Method</label>
-          <div class="mt-xs"><strong>SAUNA Wallet</strong></div>
-          <div class="small muted mt-xs">Available Balance: <strong id="cartWalletBalance">₹0.00</strong></div>
-          <div id="cartBalanceWarning" class="small mt-xs" style="color:var(--danger);"></div>
+          <div class="small muted">Payment Method</div>
+          <div class="pay-methods mt-xs">
+            <label><input type="radio" name="payMethod" value="wallet" checked /> <strong>SAUNA Wallet</strong></label>
+            <label><input type="radio" name="payMethod" value="upi" /> <strong>UPI</strong></label>
+          </div>
+          <div id="cartWalletInfo">
+            <div class="small muted mt-xs">Available Balance: <strong id="cartWalletBalance">₹0.00</strong></div>
+            <div id="cartBalanceWarning" class="small mt-xs" style="color:var(--danger);"></div>
+          </div>
         </div>
         <div class="cart-total-box">
           <div class="small muted">Total</div>
@@ -338,6 +343,7 @@
           <button id="checkoutBtn" class="btn btn-sale">Complete Purchase</button>
         </div>
       </div>
+      <div id="upiPanel" class="upi-panel mt-lg hidden" aria-live="polite"></div>
     </div>
   </div>
 

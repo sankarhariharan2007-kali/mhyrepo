@@ -956,6 +956,32 @@ tr:hover td {
   text-align: right;
 }
 
+.pay-methods {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.pay-methods label {
+  cursor: pointer;
+}
+
+.upi-panel {
+  text-align: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+}
+
+.upi-panel img {
+  display: block;
+  width: 260px;
+  max-width: 100%;
+  margin: 10px auto;
+  border-radius: 6px;
+}
+
 /* Reviews & Achievements inside Modal */
 .review-card {
   background: var(--surface);

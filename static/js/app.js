@@ -629,6 +629,8 @@ function renderCartModal() {
   if (balEl) balEl.textContent = state.activeUserId ? moneyExact(state.walletBalance) : "Login required";
   if (warnEl) warnEl.textContent = "";
 
+  renderPaymentMethod();
+
   if (!state.cart.length) {
     wrap.innerHTML = `<div class="muted">Your cart is empty.</div>`;
     document.getElementById("cartTotalValue").textContent = "₹0.00";
@@ -657,6 +659,38 @@ function renderCartModal() {
   if (state.activeUserId && total > state.walletBalance + 1e-9 && warnEl) {
     warnEl.textContent = `Insufficient wallet balance (${moneyExact(state.walletBalance)} < ${moneyExact(total)}).`;
   }
+}
+
+// Payment link read from static/images/upi_qr.png. Change both together.
+const UPI_LINK = "upi://pay?pa=senzarublackrose-1@oksbi&pn=Hariharan%20Sankar&aid=uGICAgKCMl8DEVA";
+
+function renderPaymentMethod() {
+  const isUpi = document.querySelector('input[name="payMethod"]:checked').value === "upi";
+  const panel = document.getElementById("upiPanel");
+  document.getElementById("cartWalletInfo").classList.toggle("hidden", isUpi);
+  document.getElementById("checkoutBtn").classList.toggle("hidden", isUpi);
+  panel.classList.toggle("hidden", !isUpi || !state.cart.length);
+
+  if (!isUpi || !state.cart.length) {
+    panel.innerHTML = "";
+    return;
+  }
+  if (!state.activeUserId || state.role !== "user") {
+    panel.innerHTML = `<div class="muted">Log in as a User to see the UPI QR code.</div>`;
+    return;
+  }
+  const total = state.cart.reduce((sum, g) => sum + Number(g.effective_price || 0), 0);
+  if (total <= 0) {
+    panel.innerHTML = `<div class="muted">Nothing to pay: these games are free.</div>`;
+    return;
+  }
+  panel.innerHTML = `
+    <strong>Scan and enter ${moneyExact(total)}</strong>
+    <img src="/static/images/upi_qr.png" alt="UPI QR code for senzarublackrose-1@oksbi" />
+    <div class="small">Paying <strong>Hariharan Sankar</strong></div>
+    <div class="small mt-xs"><a href="${esc(UPI_LINK)}">Open in a UPI app</a> (on your phone)</div>
+    <div class="small muted mt-sm">UPI payments are not confirmed automatically, so games are not added to your library on payment.</div>
+  `;
 }
 
 async function toggleWishlist(gameId, isWishlisted) {
@@ -1231,6 +1265,10 @@ function bindEvents() {
     document.getElementById("sqlResultWrap").innerHTML = "";
     await refreshUserData();
     toast("Logged out.");
+  });
+
+  document.querySelectorAll('input[name="payMethod"]').forEach((el) => {
+    el.addEventListener("change", renderPaymentMethod);
   });
 
   document.getElementById("checkoutBtn").addEventListener("click", async () => {
