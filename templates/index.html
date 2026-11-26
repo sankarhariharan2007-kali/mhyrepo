@@ -3,32 +3,33 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>FERRO Y — Storefront &amp; MySQL Platform</title>
+  <title>SAUNA — Digital Game Store</title>
+  <link rel="icon" type="image/png" href="/static/images/sauna_steam.png" />
   <link rel="stylesheet" href="/static/css/style.css" />
 </head>
 <body>
   <header class="topbar">
     <div class="topbar-inner">
       <div class="brand">
-        <div class="brand-logo">FY</div>
+        <img src="/static/images/sauna_steam.png" alt="SAUNA Water Steam Logo" class="brand-logo-img" />
         <div>
-          <div class="brand-title">FERRO <span class="accent">Y</span></div>
-          <div class="brand-sub">MySQL 8.4 · 17-Table ER Platform</div>
+          <div class="brand-title">SAU<span class="accent">NA</span></div>
+          <div class="brand-sub">Digital Game Store &amp; Publisher Portal</div>
         </div>
       </div>
 
       <nav class="nav-tabs" id="navTabs">
         <button class="nav-btn active" data-tab="store">Store</button>
-        <button class="nav-btn" data-tab="library">Library <span class="badge" id="badgeLibrary">0</span></button>
-        <button class="nav-btn" data-tab="wishlist">Wishlist <span class="badge" id="badgeWishlist">0</span></button>
-        <button class="nav-btn" data-tab="wallet">Wallet &amp; Orders</button>
-        <button class="nav-btn" data-tab="friends">Friends <span class="badge" id="badgeFriends">0</span></button>
-        <button class="nav-btn" data-tab="manage">Manage</button>
-        <button class="nav-btn" data-tab="db">DB Explorer</button>
+        <button class="nav-btn user-only-nav" data-tab="library">Library <span class="badge" id="badgeLibrary">0</span></button>
+        <button class="nav-btn user-only-nav" data-tab="wishlist">Wishlist <span class="badge" id="badgeWishlist">0</span></button>
+        <button class="nav-btn user-only-nav" data-tab="wallet">Wallet &amp; Orders</button>
+        <button class="nav-btn user-only-nav" data-tab="friends">Friends <span class="badge" id="badgeFriends">0</span></button>
+        <button class="nav-btn publisher-only-nav hidden" data-tab="manage">Publisher Studio</button>
+        <button class="nav-btn admin-only-nav hidden" data-tab="db">Data Explorer</button>
       </nav>
 
       <div class="user-controls">
-        <button class="cart-btn" id="openCartBtn" title="View Shopping Cart">
+        <button class="cart-btn user-only-nav" id="openCartBtn" title="View Shopping Cart">
           Cart <span class="badge accent-bg" id="cartCount">0</span>
         </button>
 
@@ -38,8 +39,9 @@
         </div>
 
         <div id="loggedInControls" class="auth-controls hidden">
-          <div class="wallet-chip" id="walletChip">₹0.00</div>
-          <div class="member-id-pill" id="memberIdPill">Member ID: #—</div>
+          <div class="wallet-chip user-only-nav" id="walletChip">₹0.00</div>
+          <span class="role-badge" id="roleBadgePill">USER</span>
+          <div class="member-id-pill" id="memberIdPill">User: —</div>
           <button class="btn-sm btn-danger" id="logoutBtn">Logout</button>
         </div>
       </div>
@@ -48,16 +50,20 @@
 
   <main class="container">
     <div id="toastContainer" class="toast-container"></div>
+    <div id="loginIdNotice" class="login-id-banner hidden"></div>
 
     <!-- STORE TAB -->
     <section id="tab-store" class="tab-panel active">
       <div class="hero-banner">
         <div>
-          <h1>FERRO Y Featured &amp; On Sale</h1>
-          <p id="activeSaleBanner">Loading current seasonal sales from MySQL...</p>
+          <h1>SAUNA Featured &amp; On Sale</h1>
+          <p id="activeSaleBanner">Loading current seasonal sales...</p>
+          <div id="heroLoginIdLine" class="small muted mt-xs"></div>
         </div>
         <div class="hero-stats" id="userQuickStats"></div>
       </div>
+
+      <div id="featuredSpotlight" class="featured-spotlight hidden"></div>
 
       <div class="filter-bar">
         <input type="text" id="searchInput" class="input" placeholder="Search games by title or description..." />
@@ -85,7 +91,7 @@
       <div class="section-header">
         <div>
           <h2>Your Game Library</h2>
-          <p class="muted">Play games to log playtime in <code>USER_LIBRARY</code> and unlock <code>USER_ACHIEVEMENTS</code>.</p>
+          <p class="muted">Launch games from your library to track playtime and unlock achievements.</p>
         </div>
       </div>
       <div id="libraryList" class="stack-list"></div>
@@ -96,7 +102,7 @@
       <div class="section-header">
         <div>
           <h2>Your Wishlist</h2>
-          <p class="muted">Tracked in <code>WISHLIST</code> with live discount pricing from <code>SALES</code> &amp; <code>SALE_ITEMS</code>.</p>
+          <p class="muted">Your saved games with live seasonal discount pricing.</p>
         </div>
       </div>
       <div id="wishlistList" class="stack-list"></div>
@@ -107,11 +113,11 @@
       <div id="walletAuthGuard" class="card hidden"></div>
       <div id="walletContent" class="two-col">
         <div class="card">
-          <h3>FERRO Y Wallet</h3>
-          <p class="muted">Add funds to <code>USERS.wallet_balance</code> and record a <code>WALLET_TRANSACTIONS</code> deposit.</p>
+          <h3>SAUNA Wallet</h3>
+          <p class="muted">Add funds to your SAUNA Wallet and view your transaction history.</p>
           <div class="wallet-big" id="walletBig">₹0.00</div>
           <form id="depositForm" class="inline-form">
-            <input type="number" step="0.01" min="1" id="depositAmount" class="input" placeholder="Amount (e.g. 50.00)" required />
+            <input type="number" step="0.01" min="1" id="depositAmount" class="input" placeholder="Amount in ₹ (e.g. 1000.00)" required />
             <button type="submit" class="btn btn-primary">Add Funds</button>
           </form>
           <h4 class="mt-lg">Wallet Transaction Ledger</h4>
@@ -120,7 +126,7 @@
 
         <div class="card">
           <h3>Order History</h3>
-          <p class="muted">All completed purchases stored in <code>ORDERS</code> and <code>ORDER_ITEMS</code>.</p>
+          <p class="muted">All completed game purchases and itemized receipts.</p>
           <div id="ordersList" class="stack-list mt-md"></div>
         </div>
       </div>
@@ -132,7 +138,7 @@
       <div id="friendsContent" class="two-col">
         <div class="card">
           <h3>Add Friend by Member ID</h3>
-          <p class="muted">Enter another member's numeric ID to send a friendship request in <code>FRIENDSHIPS</code>.</p>
+          <p class="muted">Connect with other players by sending a friend request using their Member ID.</p>
           <form id="addFriendForm" class="inline-form mt-md">
             <input type="number" min="1" id="friendMemberIdInput" class="input" placeholder="Enter Friend Member ID (e.g. 4)" required />
             <button type="submit" class="btn btn-primary">Send Request</button>
@@ -145,117 +151,116 @@
       </div>
     </section>
 
-    <!-- MANAGE CATALOG TAB -->
+    <!-- PUBLISHER STUDIO TAB -->
     <section id="tab-manage" class="tab-panel">
-      <div class="manage-grid">
-        <div class="card">
-          <h3>Add Game</h3>
-          <form id="createGameForm" class="form-stack">
-            <input type="text" name="title" class="input" placeholder="Game Title" required />
-            <textarea name="description" class="input" rows="2" placeholder="Description"></textarea>
-            <div class="form-row">
-              <input type="date" name="release_date" class="input" />
-              <input type="number" step="0.01" min="0" name="base_price" class="input" placeholder="Base Price (₹)" required />
-            </div>
-            <div class="form-row">
-              <select name="publisher_id" id="managePubSelect" class="input" required></select>
+      <div id="publisherAuthGuard" class="card hidden"></div>
+      <div id="publisherStudioContent">
+        <div class="section-header">
+          <div>
+            <h2 id="publisherStudioTitle">Publisher Studio</h2>
+            <p class="muted">Publish new titles, configure seasonal discounts, and manage achievements for your studio.</p>
+          </div>
+        </div>
+
+        <div class="card mb-md" style="margin-bottom: 18px;">
+          <h3>Your Published Games</h3>
+          <div id="publisherGamesList" class="stack-list mt-md"></div>
+        </div>
+
+        <div class="manage-grid">
+          <div class="card">
+            <h3>Publish New Game</h3>
+            <form id="createGameForm" class="form-stack">
+              <div class="small muted">Publishing as: <strong id="publishingStudioName">—</strong></div>
+              <input type="text" name="title" class="input" placeholder="Game Title" required />
+              <textarea name="description" class="input" rows="2" placeholder="Description"></textarea>
+              <div class="form-row">
+                <input type="date" name="release_date" class="input" />
+                <input type="number" step="0.01" min="0" name="base_price" class="input" placeholder="Base Price (₹)" required />
+              </div>
               <select name="developer_id" id="manageDevSelect" class="input" required></select>
-            </div>
-            <input type="text" name="age_rating" class="input" placeholder="Age Rating (e.g. Mature 17+)" value="Everyone" />
-            <div>
-              <label class="muted small">Assign Tags:</label>
-              <div id="manageTagCheckboxes" class="tag-checks"></div>
-            </div>
-            <button type="submit" class="btn btn-primary">Create Game</button>
-          </form>
-        </div>
+              <input type="text" name="age_rating" class="input" placeholder="Age Rating (e.g. Mature 17+)" value="Everyone" />
+              <div>
+                <label class="muted small">Assign Tags:</label>
+                <div id="manageTagCheckboxes" class="tag-checks"></div>
+              </div>
+              <button type="submit" class="btn btn-primary">Publish Game</button>
+            </form>
+          </div>
 
-        <div class="card">
-          <h3>Add Publisher / Developer / Tag</h3>
-          <form id="createPubForm" class="form-stack">
-            <div class="small muted">New Publisher</div>
-            <div class="form-row">
-              <input type="text" name="name" class="input" placeholder="Publisher Name" required />
-              <input type="text" name="country" class="input" placeholder="Country" />
-            </div>
-            <div class="form-row">
-              <input type="number" name="founded_year" class="input" placeholder="Founded Year" />
+          <div class="card">
+            <h3>Add Developer &amp; Tag</h3>
+            <form id="createDevForm" class="form-stack">
+              <div class="small muted">Register Developer Studio</div>
+              <div class="form-row">
+                <input type="text" name="name" class="input" placeholder="Developer Name" required />
+                <input type="text" name="country" class="input" placeholder="Country" />
+              </div>
               <input type="text" name="website" class="input" placeholder="Website URL" />
-            </div>
-            <button type="submit" class="btn btn-secondary">Add Publisher</button>
-          </form>
+              <button type="submit" class="btn btn-secondary">Add Developer</button>
+            </form>
 
-          <hr class="divider" />
+            <hr class="divider" />
 
-          <form id="createDevForm" class="form-stack">
-            <div class="small muted">New Developer</div>
-            <div class="form-row">
-              <input type="text" name="name" class="input" placeholder="Developer Name" required />
-              <input type="text" name="country" class="input" placeholder="Country" />
-            </div>
-            <input type="text" name="website" class="input" placeholder="Website URL" />
-            <button type="submit" class="btn btn-secondary">Add Developer</button>
-          </form>
+            <form id="createTagForm" class="form-stack">
+              <div class="small muted">Create Store Tag</div>
+              <div class="form-row">
+                <input type="text" name="name" class="input" placeholder="Tag Name" required />
+                <input type="text" name="description" class="input" placeholder="Description" />
+              </div>
+              <button type="submit" class="btn btn-secondary">Add Tag</button>
+            </form>
+          </div>
 
-          <hr class="divider" />
+          <div class="card">
+            <h3>Sales, Discounts &amp; Achievements</h3>
+            <form id="createSaleForm" class="form-stack">
+              <div class="small muted">Create Sale Event</div>
+              <input type="text" name="title" class="input" placeholder="Sale Title (e.g. Winter Sale)" required />
+              <div class="form-row">
+                <input type="datetime-local" name="start_date" class="input" required />
+                <input type="datetime-local" name="end_date" class="input" required />
+              </div>
+              <button type="submit" class="btn btn-secondary">Create Sale</button>
+            </form>
 
-          <form id="createTagForm" class="form-stack">
-            <div class="small muted">New Tag</div>
-            <div class="form-row">
-              <input type="text" name="name" class="input" placeholder="Tag Name" required />
+            <hr class="divider" />
+
+            <form id="addSaleItemForm" class="form-stack">
+              <div class="small muted">Discount One of Your Games</div>
+              <select name="sale_id" id="manageSaleSelect" class="input" required></select>
+              <div class="form-row">
+                <select name="game_id" id="manageSaleGameSelect" class="input" required></select>
+                <input type="number" name="discount_pct" min="1" max="100" class="input" placeholder="Discount %" required />
+              </div>
+              <button type="submit" class="btn btn-primary">Apply Discount</button>
+            </form>
+
+            <hr class="divider" />
+
+            <form id="createAchForm" class="form-stack">
+              <div class="small muted">Add Achievement to Your Game</div>
+              <select name="game_id" id="manageAchGameSelect" class="input" required></select>
+              <input type="text" name="name" class="input" placeholder="Achievement Name" required />
               <input type="text" name="description" class="input" placeholder="Description" />
-            </div>
-            <button type="submit" class="btn btn-secondary">Add Tag</button>
-          </form>
-        </div>
-
-        <div class="card">
-          <h3>Sales &amp; Discounts</h3>
-          <form id="createSaleForm" class="form-stack">
-            <div class="small muted">Create Sale Event</div>
-            <input type="text" name="title" class="input" placeholder="Sale Title (e.g. Winter Sale)" required />
-            <div class="form-row">
-              <input type="datetime-local" name="start_date" class="input" required />
-              <input type="datetime-local" name="end_date" class="input" required />
-            </div>
-            <button type="submit" class="btn btn-secondary">Create Sale</button>
-          </form>
-
-          <hr class="divider" />
-
-          <form id="addSaleItemForm" class="form-stack">
-            <div class="small muted">Discount a Game in a Sale</div>
-            <select name="sale_id" id="manageSaleSelect" class="input" required></select>
-            <div class="form-row">
-              <select name="game_id" id="manageSaleGameSelect" class="input" required></select>
-              <input type="number" name="discount_pct" min="1" max="100" class="input" placeholder="Discount %" required />
-            </div>
-            <button type="submit" class="btn btn-primary">Apply Discount</button>
-          </form>
-
-          <hr class="divider" />
-
-          <form id="createAchForm" class="form-stack">
-            <div class="small muted">Add Game Achievement</div>
-            <select name="game_id" id="manageAchGameSelect" class="input" required></select>
-            <input type="text" name="name" class="input" placeholder="Achievement Name" required />
-            <input type="text" name="description" class="input" placeholder="Description" />
-            <label class="checkbox-pill">
-              <input type="checkbox" name="is_hidden" />
-              <span>Hidden Achievement</span>
-            </label>
-            <button type="submit" class="btn btn-secondary">Add Achievement</button>
-          </form>
+              <label class="checkbox-pill">
+                <input type="checkbox" name="is_hidden" />
+                <span>Hidden Achievement</span>
+              </label>
+              <button type="submit" class="btn btn-secondary">Add Achievement</button>
+            </form>
+          </div>
         </div>
       </div>
     </section>
 
-    <!-- DB EXPLORER TAB -->
+    <!-- DATA EXPLORER TAB (PLATFORM ADMIN ONLY) -->
     <section id="tab-db" class="tab-panel">
-      <div class="db-layout">
+      <div id="adminAuthGuard" class="card hidden"></div>
+      <div id="dbContent" class="db-layout">
         <div class="card db-sidebar">
-          <h3>17 ER Tables</h3>
-          <p class="muted small">Click any table to inspect live MySQL rows &amp; schema.</p>
+          <h3>Data Tables</h3>
+          <p class="muted small">Click any table to inspect live records &amp; schema.</p>
           <div id="dbTablesList" class="db-table-list"></div>
         </div>
         <div class="db-main">
@@ -270,16 +275,16 @@
 
           <div class="card mt-md">
             <div class="section-header">
-              <h3>Live SQL Query Runner (Read-Only)</h3>
+              <h3>Live Query Runner (Read-Only)</h3>
               <div class="preset-btns">
                 <button class="btn-sm btn-ghost sql-preset" data-sql="SELECT g.title, g.base_price, si.discount_pct, ROUND(g.base_price * (100 - si.discount_pct)/100, 2) AS sale_price, s.title AS sale FROM GAMES g JOIN SALE_ITEMS si ON si.game_id = g.game_id JOIN SALES s ON s.sale_id = si.sale_id WHERE NOW() BETWEEN s.start_date AND s.end_date ORDER BY si.discount_pct DESC;">Active Sale Prices</button>
-                <button class="btn-sm btn-ghost sql-preset" data-sql="SELECT u.user_id, COUNT(ul.game_id) AS games_owned, COALESCE(SUM(ul.playtime_minutes),0) AS total_mins, u.wallet_balance FROM USERS u LEFT JOIN USER_LIBRARY ul ON ul.user_id = u.user_id GROUP BY u.user_id ORDER BY total_mins DESC;">Top Players (By ID)</button>
-                <button class="btn-sm btn-ghost sql-preset" data-sql="SELECT g.title, COUNT(r.review_id) AS reviews, SUM(r.is_recommended) AS positive, SUM(r.helpful_votes) AS helpful FROM GAMES g LEFT JOIN REVIEWS r ON r.game_id = g.game_id GROUP BY g.game_id ORDER BY positive DESC;">Review Summary</button>
+                <button class="btn-sm btn-ghost sql-preset" data-sql="SELECT u.user_id, u.role, COUNT(ul.game_id) AS games_owned, COALESCE(SUM(ul.playtime_minutes),0) AS total_mins FROM USERS u LEFT JOIN USER_LIBRARY ul ON ul.user_id = u.user_id GROUP BY u.user_id ORDER BY total_mins DESC;">Top Players (By ID)</button>
+                <button class="btn-sm btn-ghost sql-preset" data-sql="SELECT g.title, COUNT(r.review_id) AS reviews, SUM(CASE WHEN r.is_recommended THEN 1 ELSE 0 END) AS positive, SUM(r.helpful_votes) AS helpful FROM GAMES g LEFT JOIN REVIEWS r ON r.game_id = g.game_id GROUP BY g.game_id ORDER BY positive DESC;">Review Summary</button>
               </div>
             </div>
-            <textarea id="sqlInput" class="input sql-editor" rows="4">SHOW TABLES;</textarea>
+            <textarea id="sqlInput" class="input sql-editor" rows="4">SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name;</textarea>
             <div class="mt-sm">
-              <button class="btn btn-primary" id="runSqlBtn">Run SQL</button>
+              <button class="btn btn-primary" id="runSqlBtn">Run Query</button>
             </div>
             <div id="sqlResultWrap" class="table-wrap mt-md"></div>
           </div>
@@ -307,7 +312,7 @@
       <div class="cart-footer mt-lg">
         <div>
           <label class="small muted">Payment Method</label>
-          <div class="mt-xs"><strong>FERRO Y Wallet</strong></div>
+          <div class="mt-xs"><strong>SAUNA Wallet</strong></div>
           <div class="small muted mt-xs">Available Balance: <strong id="cartWalletBalance">₹0.00</strong></div>
           <div id="cartBalanceWarning" class="small mt-xs" style="color:var(--danger);"></div>
         </div>
@@ -325,15 +330,23 @@
     <div class="modal-backdrop" data-close="loginModal"></div>
     <div class="modal-dialog">
       <button class="modal-close" data-close="loginModal">&times;</button>
-      <h3>Login to FERRO Y</h3>
-      <p class="muted small">Sign in using your Member ID (or username) and password.</p>
+      <h3>Login to SAUNA</h3>
+      <p class="muted small">Choose your account type, then sign in with your username (or Member ID) and password.</p>
+
+      <div class="role-toggle role-toggle-3 mt-md" id="loginRoleToggle">
+        <button type="button" class="role-opt active" data-role="user">User</button>
+        <button type="button" class="role-opt" data-role="publisher">Publisher</button>
+        <button type="button" class="role-opt" data-role="admin">Platform Admin</button>
+      </div>
+
       <form id="loginForm" class="form-stack mt-md">
-        <input type="text" name="identifier" class="input" placeholder="Member ID (e.g. 1) or Username" required />
+        <input type="hidden" name="account_type" id="loginAccountType" value="user" />
+        <input type="text" name="identifier" id="loginIdentifierInput" class="input" placeholder="Username or Member ID (e.g. 1)" required />
         <input type="password" name="password" class="input" placeholder="Password" required />
-        <button type="submit" class="btn btn-primary">Login</button>
+        <button type="submit" class="btn btn-primary" id="loginSubmitBtn">Login as User</button>
       </form>
-      <div class="muted small mt-md">
-        Demo Member IDs: <code>1</code> to <code>6</code> · Password: <code>password123</code>
+      <div class="muted small mt-md" id="loginHintText">
+        Demo User IDs: <code>1</code> to <code>6</code> · Password: <code>password123</code>
       </div>
     </div>
   </div>
@@ -343,14 +356,33 @@
     <div class="modal-backdrop" data-close="registerModal"></div>
     <div class="modal-dialog">
       <button class="modal-close" data-close="registerModal">&times;</button>
-      <h3>Create FERRO Y Account</h3>
+      <h3>Create SAUNA Account</h3>
+
+      <div class="role-toggle mt-md" id="registerRoleToggle">
+        <button type="button" class="role-opt active" data-role="user">Register as User</button>
+        <button type="button" class="role-opt" data-role="publisher">Register as Publisher</button>
+      </div>
+
       <form id="registerForm" class="form-stack mt-md">
+        <input type="hidden" name="account_type" id="registerAccountType" value="user" />
         <input type="text" name="username" class="input" placeholder="Username" required />
         <input type="email" name="email" class="input" placeholder="Email" required />
         <input type="password" name="password" class="input" placeholder="Password (min 4 chars)" required />
         <input type="text" name="country" class="input" placeholder="Country" value="India" />
-        <input type="number" step="0.01" min="0" name="wallet_balance" class="input" placeholder="Initial Wallet Balance (₹)" value="100.00" />
-        <button type="submit" class="btn btn-primary">Create Account</button>
+
+        <div id="registerUserFields">
+          <input type="number" step="0.01" min="0" name="wallet_balance" class="input" placeholder="Initial Wallet Balance (₹)" value="5000.00" />
+        </div>
+
+        <div id="registerPublisherFields" class="form-stack hidden">
+          <input type="text" name="publisher_name" id="regPublisherName" class="input" placeholder="Publisher / Studio Name" />
+          <div class="form-row">
+            <input type="number" name="founded_year" class="input" placeholder="Founded Year (e.g. 2020)" />
+            <input type="text" name="website" class="input" placeholder="Studio Website URL" />
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary" id="registerSubmitBtn">Create User Account</button>
       </form>
     </div>
   </div>

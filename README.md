@@ -1,4 +1,4 @@
-# FERRO Y — Game Store Platform (Flask + PostgreSQL)
+# SAUNA — Digital Game Store & Publisher Portal (Flask + PostgreSQL)
 
 A full-stack **PostgreSQL** database and **Flask** web app built from [`steam_er_diagram.png`](steam_er_diagram.png).
 
@@ -12,10 +12,11 @@ Defined in [`sql/01_schema.sql`](sql/01_schema.sql), seeded by [`sql/02_seed.sql
 - **Player Activity**: `user_library`, `wishlist`, `reviews`, `achievements`, `user_achievements`
 
 ## Key Features
-- Member ID / username / email + password login (scrypt hashes), registration, logout.
+- Three roles: **User**, **Publisher** and **Platform Admin**, with username / email / Member ID login.
 - Rupee wallet with atomic purchases (`SELECT ... FOR UPDATE`), orders, line items, wallet ledger.
-- Storefront with seasonal sales, wishlist, library & playtime, achievements, reviews, friends.
-- Admin-only catalog management and a read-only SQL explorer (enforced by a PostgreSQL read-only transaction).
+- Storefront with featured spotlight, sales, wishlist, library, achievements, reviews, friends.
+- Publisher Studio: publish games, add discounts and achievements for your own catalog.
+- Admin-only Data Explorer with a read-only SQL runner. Password hashes, wallet balances and wallet transaction amounts are masked.
 
 ## Running locally
 ```bash
@@ -25,7 +26,15 @@ export DATABASE_URL=postgresql://USER:PASS@127.0.0.1:5432/steam_db
 python scripts/init_db.py      # creates tables, loads demo data if empty
 python app.py                  # http://127.0.0.1:5050
 ```
-Demo Member IDs `1`-`6`, password `password123`. Member `1` is the admin.
+Demo accounts (password `password123`). Pick the matching account type on the login screen.
+
+| Account type | Username |
+|---|---|
+| User | `arjun_dev`, `elena_vance`, `kenji_k`, `marta_r`, `liam_os`, `sara_chen` |
+| Publisher | `valve_pub`, `cdpr_pub`, `supergiant_pub` |
+| Platform Admin | `admin` |
+
+These passwords are public, so treat a deployment seeded with them as a demo only.
 
 ## Deploying to Render (no Docker)
 1. Create a free PostgreSQL database (Render Postgres, Neon, Supabase, Aiven...) and copy its connection string.
@@ -38,11 +47,11 @@ Demo Member IDs `1`-`6`, password `password123`. Member `1` is the admin.
 | Variable | Value |
 |---|---|
 | `DATABASE_URL` | your Postgres connection string (include `?sslmode=require` if the provider needs it) |
-| `FERRO_SECRET_KEY` | long random string |
-| `FERRO_COOKIE_SECURE` | `1` |
-| `ADMIN_USER_IDS` | `1` (comma-separated member IDs) |
+| `SAUNA_SECRET_KEY` | long random string, required on Render (`FERRO_SECRET_KEY` also works) |
+| `SAUNA_COOKIE_SECURE` | `1` (`FERRO_COOKIE_SECURE` also works) |
 | `ENABLE_SQL_EXPLORER` | `1` or `0` |
 | `SEED_DEMO_DATA` | `1` first deploy; `0` afterwards if you want no demo data on a fresh DB |
+| `RESET_DEMO_DATA` | `1` once, only to replace the old FERRO Y demo data. **Wipes all tables.** |
 | `PYTHON_VERSION` | `3.12.7` |
 
-On boot `scripts/init_db.py` creates missing tables and seeds demo data only when `users` is empty, so redeploys never wipe data. Change the demo passwords after the first login.
+On boot `scripts/init_db.py` creates missing tables, upgrades older ones and seeds demo data only when `users` is empty, so redeploys do not wipe data unless you set `RESET_DEMO_DATA=1` on an old FERRO Y database.
