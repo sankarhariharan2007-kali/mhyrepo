@@ -1,0 +1,17 @@
+[mysqld]
+datadir=/home/cse-sdpl/124cs0045/dbms-pro/mysql_data
+socket=/home/cse-sdpl/124cs0045/dbms-pro/mysql_data/mysql.sock
+pid-file=/home/cse-sdpl/124cs0045/dbms-pro/mysql_data/mysql.pid
+log-error=/home/cse-sdpl/124cs0045/dbms-pro/mysql_data/mysql_error.log
+lc-messages-dir=/home/cse-sdpl/anaconda3/share/mysql
+plugin-dir=/home/cse-sdpl/anaconda3/lib/plugin
+character-set-server=utf8mb4
+collation-server=utf8mb4_unicode_ci
+port=3306
+bind-address=127.0.0.1
+lower_case_table_names=1
+mysqlx=0
+
+[client]
+socket=/home/cse-sdpl/124cs0045/dbms-pro/mysql_data/mysql.sock
+port=3306

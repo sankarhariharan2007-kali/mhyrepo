@@ -1,5 +1,25 @@
--- Demo seed data (PostgreSQL). Loaded by scripts/init_db.py only when USERS is empty.
+-- Seed data for Steam Store & Gaming Platform (steam_db)
+USE steam_db;
 
+SET FOREIGN_KEY_CHECKS = 0;
+TRUNCATE TABLE GAME_TAGS;
+TRUNCATE TABLE TAGS;
+TRUNCATE TABLE USER_ACHIEVEMENTS;
+TRUNCATE TABLE ACHIEVEMENTS;
+TRUNCATE TABLE SALE_ITEMS;
+TRUNCATE TABLE SALES;
+TRUNCATE TABLE WISHLIST;
+TRUNCATE TABLE REVIEWS;
+TRUNCATE TABLE USER_LIBRARY;
+TRUNCATE TABLE ORDER_ITEMS;
+TRUNCATE TABLE WALLET_TRANSACTIONS;
+TRUNCATE TABLE ORDERS;
+TRUNCATE TABLE FRIENDSHIPS;
+TRUNCATE TABLE USERS;
+TRUNCATE TABLE GAMES;
+TRUNCATE TABLE DEVELOPERS;
+TRUNCATE TABLE PUBLISHERS;
+SET FOREIGN_KEY_CHECKS = 1;
 
 -- 1. PUBLISHERS
 INSERT INTO PUBLISHERS (publisher_id, name, country, founded_year, website) VALUES
@@ -22,29 +42,33 @@ INSERT INTO DEVELOPERS (developer_id, name, country, website) VALUES
 (7, 'Playground Games', 'UK', 'https://playground-games.com'),
 (8, 'Obsidian Entertainment', 'USA', 'https://www.obsidian.net');
 
--- 3. GAMES
+-- 3. GAMES (Indian Rupee pricing)
 INSERT INTO GAMES (game_id, title, description, release_date, base_price, publisher_id, developer_id, age_rating) VALUES
 (1, 'Counter-Strike 2', 'For over two decades, Counter-Strike has offered an elite competitive experience, built on Source 2 engine with upgraded maps and tactical teamplay.', '2023-09-27', 0.00, 1, 1, 'Mature 17+'),
-(2, 'Half-Life: Alyx', 'Valve''s VR return to the Half-Life series. Set between Half-Life and Half-Life 2, fight against the Combine as Alyx Vance.', '2020-03-23', 59.99, 1, 1, 'Mature 17+'),
-(3, 'Portal 2', 'The perpetual testing initiative continues with mind-bending co-op and single-player portal puzzles powered by GLaDOS.', '2011-04-19', 9.99, 1, 1, 'Everyone 10+'),
-(4, 'Cyberpunk 2077', 'An open-world, action-adventure RPG set in Night City, a megalopolis obsessed with power, glamour, and body modification.', '2020-12-10', 59.99, 2, 2, 'Mature 17+'),
-(5, 'The Witcher 3: Wild Hunt', 'You are Geralt of Rivia, mercenary monster slayer. Explore a war-torn continent and track down Ciri, the Child of Prophecy.', '2015-05-19', 39.99, 2, 2, 'Mature 17+'),
-(6, 'ELDEN RING', 'Rise, Tarnished, and be guided by grace to brandish the power of the Elden Ring and become an Elden Lord in the Lands Between.', '2022-02-25', 59.99, 3, 3, 'Mature 17+'),
-(7, 'Hades', 'Defy the god of the dead as you hack and slash out of the Underworld in this rogue-like dungeon crawler from Supergiant Games.', '2020-09-17', 24.99, 4, 4, 'Teen'),
-(8, 'Hades II', 'Battle beyond the Underworld using dark sorcery to take on the Titan of Time in Supergiant''s bewitching sequel.', '2025-09-25', 29.99, 4, 4, 'Teen'),
-(9, 'Hollow Knight', 'Forge your own path in Hollow Knight! An epic action adventure through a vast ruined kingdom of insects and heroes.', '2017-02-24', 14.99, 5, 5, 'Everyone 10+'),
-(10, 'Baldur''s Gate 3', 'Gather your party and return to the Forgotten Realms in a tale of fellowship and betrayal, sacrifice and survival.', '2023-08-03', 59.99, 6, 6, 'Mature 17+'),
-(11, 'Forza Horizon 5', 'Your Ultimate Horizon Adventure awaits! Explore the vibrant open world landscapes of Mexico with limitless driving action.', '2021-11-09', 59.99, 7, 7, 'Everyone'),
-(12, 'Pentiment', 'Step into a living illustrated world in 16th-century Bavaria and unravel a series of murders spanning twenty-five years.', '2022-11-15', 19.99, 7, 8, 'Mature 17+');
+(2, 'Half-Life: Alyx', 'Valve''s VR return to the Half-Life series. Set between Half-Life and Half-Life 2, fight against the Combine as Alyx Vance.', '2020-03-23', 2499.00, 1, 1, 'Mature 17+'),
+(3, 'Portal 2', 'The perpetual testing initiative continues with mind-bending co-op and single-player portal puzzles powered by GLaDOS.', '2011-04-19', 480.00, 1, 1, 'Everyone 10+'),
+(4, 'Cyberpunk 2077', 'An open-world, action-adventure RPG set in Night City, a megalopolis obsessed with power, glamour, and body modification.', '2020-12-10', 2999.00, 2, 2, 'Mature 17+'),
+(5, 'The Witcher 3: Wild Hunt', 'You are Geralt of Rivia, mercenary monster slayer. Explore a war-torn continent and track down Ciri, the Child of Prophecy.', '2015-05-19', 1999.00, 2, 2, 'Mature 17+'),
+(6, 'ELDEN RING', 'Rise, Tarnished, and be guided by grace to brandish the power of the Elden Ring and become an Elden Lord in the Lands Between.', '2022-02-25', 3599.00, 3, 3, 'Mature 17+'),
+(7, 'Hades', 'Defy the god of the dead as you hack and slash out of the Underworld in this rogue-like dungeon crawler from Supergiant Games.', '2020-09-17', 1100.00, 4, 4, 'Teen'),
+(8, 'Hades II', 'Battle beyond the Underworld using dark sorcery to take on the Titan of Time in Supergiant''s bewitching sequel.', '2025-09-25', 1300.00, 4, 4, 'Teen'),
+(9, 'Hollow Knight', 'Forge your own path in Hollow Knight! An epic action adventure through a vast ruined kingdom of insects and heroes.', '2017-02-24', 690.00, 5, 5, 'Everyone 10+'),
+(10, 'Baldur''s Gate 3', 'Gather your party and return to the Forgotten Realms in a tale of fellowship and betrayal, sacrifice and survival.', '2023-08-03', 2999.00, 6, 6, 'Mature 17+'),
+(11, 'Forza Horizon 5', 'Your Ultimate Horizon Adventure awaits! Explore the vibrant open world landscapes of Mexico with limitless driving action.', '2021-11-09', 3499.00, 7, 7, 'Everyone'),
+(12, 'Pentiment', 'Step into a living illustrated world in 16th-century Bavaria and unravel a series of murders spanning twenty-five years.', '2022-11-15', 1299.00, 7, 8, 'Mature 17+');
 
--- 4. USERS (default seeded password for all demo accounts: password123)
-INSERT INTO USERS (user_id, username, email, password_hash, wallet_balance, country, created_at) VALUES
-(1, 'arjun_dev', 'arjun@ferroy.io', 'scrypt:32768:8:1$6GOOMpmt2bBr3BM0$f5b262259419bcf308acf497fb17d7c4a2c9fe292aa3aac8edd8bfc82c9eac12b191b6e043621297298f22e47021fbff86d62819d2227e3215b42554bbcafaa2', 145.50, 'India', '2023-01-15 10:22:00'),
-(2, 'elena_vance', 'elena@ferroy.io', 'scrypt:32768:8:1$6GOOMpmt2bBr3BM0$f5b262259419bcf308acf497fb17d7c4a2c9fe292aa3aac8edd8bfc82c9eac12b191b6e043621297298f22e47021fbff86d62819d2227e3215b42554bbcafaa2', 82.00, 'USA', '2022-06-03 14:10:00'),
-(3, 'kenji_k', 'kenji@ferroy.io', 'scrypt:32768:8:1$6GOOMpmt2bBr3BM0$f5b262259419bcf308acf497fb17d7c4a2c9fe292aa3aac8edd8bfc82c9eac12b191b6e043621297298f22e47021fbff86d62819d2227e3215b42554bbcafaa2', 210.25, 'Japan', '2021-11-20 08:45:00'),
-(4, 'marta_r', 'marta@ferroy.io', 'scrypt:32768:8:1$6GOOMpmt2bBr3BM0$f5b262259419bcf308acf497fb17d7c4a2c9fe292aa3aac8edd8bfc82c9eac12b191b6e043621297298f22e47021fbff86d62819d2227e3215b42554bbcafaa2', 35.00, 'Poland', '2024-02-11 19:30:00'),
-(5, 'liam_os', 'liam@ferroy.io', 'scrypt:32768:8:1$6GOOMpmt2bBr3BM0$f5b262259419bcf308acf497fb17d7c4a2c9fe292aa3aac8edd8bfc82c9eac12b191b6e043621297298f22e47021fbff86d62819d2227e3215b42554bbcafaa2', 50.00, 'UK', '2024-08-09 12:05:00'),
-(6, 'sara_chen', 'sara@ferroy.io', 'scrypt:32768:8:1$6GOOMpmt2bBr3BM0$f5b262259419bcf308acf497fb17d7c4a2c9fe292aa3aac8edd8bfc82c9eac12b191b6e043621297298f22e47021fbff86d62819d2227e3215b42554bbcafaa2', 120.00, 'Canada', '2025-01-04 16:40:00');
+-- 4. USERS & PUBLISHERS (default seeded password for all demo accounts: password123)
+INSERT INTO USERS (user_id, username, email, password_hash, role, publisher_id, wallet_balance, country, created_at) VALUES
+(1, 'arjun_dev', 'arjun@sauna.io', 'scrypt:32768:8:1$6GOOMpmt2bBr3BM0$f5b262259419bcf308acf497fb17d7c4a2c9fe292aa3aac8edd8bfc82c9eac12b191b6e043621297298f22e47021fbff86d62819d2227e3215b42554bbcafaa2', 'user', NULL, 5801.00, 'India', '2023-01-15 10:22:00'),
+(2, 'elena_vance', 'elena@sauna.io', 'scrypt:32768:8:1$6GOOMpmt2bBr3BM0$f5b262259419bcf308acf497fb17d7c4a2c9fe292aa3aac8edd8bfc82c9eac12b191b6e043621297298f22e47021fbff86d62819d2227e3215b42554bbcafaa2', 'user', NULL, 4500.00, 'USA', '2022-06-03 14:10:00'),
+(3, 'kenji_k', 'kenji@sauna.io', 'scrypt:32768:8:1$6GOOMpmt2bBr3BM0$f5b262259419bcf308acf497fb17d7c4a2c9fe292aa3aac8edd8bfc82c9eac12b191b6e043621297298f22e47021fbff86d62819d2227e3215b42554bbcafaa2', 'user', NULL, 9002.00, 'Japan', '2021-11-20 08:45:00'),
+(4, 'marta_r', 'marta@sauna.io', 'scrypt:32768:8:1$6GOOMpmt2bBr3BM0$f5b262259419bcf308acf497fb17d7c4a2c9fe292aa3aac8edd8bfc82c9eac12b191b6e043621297298f22e47021fbff86d62819d2227e3215b42554bbcafaa2', 'user', NULL, 1521.00, 'Poland', '2024-02-11 19:30:00'),
+(5, 'liam_os', 'liam@sauna.io', 'scrypt:32768:8:1$6GOOMpmt2bBr3BM0$f5b262259419bcf308acf497fb17d7c4a2c9fe292aa3aac8edd8bfc82c9eac12b191b6e043621297298f22e47021fbff86d62819d2227e3215b42554bbcafaa2', 'user', NULL, 2500.00, 'UK', '2024-08-09 12:05:00'),
+(6, 'sara_chen', 'sara@sauna.io', 'scrypt:32768:8:1$6GOOMpmt2bBr3BM0$f5b262259419bcf308acf497fb17d7c4a2c9fe292aa3aac8edd8bfc82c9eac12b191b6e043621297298f22e47021fbff86d62819d2227e3215b42554bbcafaa2', 'user', NULL, 5100.80, 'Canada', '2025-01-04 16:40:00'),
+(7, 'valve_pub', 'valve@sauna.io', 'scrypt:32768:8:1$6GOOMpmt2bBr3BM0$f5b262259419bcf308acf497fb17d7c4a2c9fe292aa3aac8edd8bfc82c9eac12b191b6e043621297298f22e47021fbff86d62819d2227e3215b42554bbcafaa2', 'publisher', 1, 0.00, 'USA', '2023-01-01 09:00:00'),
+(8, 'cdpr_pub', 'cdpr@sauna.io', 'scrypt:32768:8:1$6GOOMpmt2bBr3BM0$f5b262259419bcf308acf497fb17d7c4a2c9fe292aa3aac8edd8bfc82c9eac12b191b6e043621297298f22e47021fbff86d62819d2227e3215b42554bbcafaa2', 'publisher', 2, 0.00, 'Poland', '2023-01-01 09:00:00'),
+(9, 'supergiant_pub', 'supergiant@sauna.io', 'scrypt:32768:8:1$6GOOMpmt2bBr3BM0$f5b262259419bcf308acf497fb17d7c4a2c9fe292aa3aac8edd8bfc82c9eac12b191b6e043621297298f22e47021fbff86d62819d2227e3215b42554bbcafaa2', 'publisher', 4, 0.00, 'USA', '2023-01-01 09:00:00'),
+(10, 'admin', 'admin@sauna.io', 'scrypt:32768:8:1$6GOOMpmt2bBr3BM0$f5b262259419bcf308acf497fb17d7c4a2c9fe292aa3aac8edd8bfc82c9eac12b191b6e043621297298f22e47021fbff86d62819d2227e3215b42554bbcafaa2', 'admin', NULL, 0.00, 'India', '2023-01-01 09:00:00');
 
 -- 5. FRIENDSHIPS
 INSERT INTO FRIENDSHIPS (user_id, friend_id, status, created_at) VALUES
@@ -58,41 +82,41 @@ INSERT INTO FRIENDSHIPS (user_id, friend_id, status, created_at) VALUES
 
 -- 6. ORDERS
 INSERT INTO ORDERS (order_id, user_id, total_amount, payment_method, status, created_at) VALUES
-(1, 1, 84.98, 'Steam Wallet', 'completed', '2025-11-25 14:20:00'),
-(2, 1, 14.99, 'UPI', 'completed', '2026-03-12 19:05:00'),
-(3, 2, 79.98, 'Credit Card', 'completed', '2025-07-02 10:40:00'),
-(4, 3, 119.98, 'Steam Wallet', 'completed', '2026-01-19 22:15:00'),
-(5, 4, 29.99, 'Steam Wallet', 'completed', '2026-06-28 16:00:00'),
-(6, 5, 24.99, 'PayPal', 'completed', '2026-10-05 11:30:00'),
-(7, 6, 47.99, 'Steam Wallet', 'completed', '2026-11-22 13:45:00');
+(1, 1, 4699.00, 'SAUNA Wallet', 'completed', '2025-11-25 14:20:00'),
+(2, 1, 690.00, 'SAUNA Wallet', 'completed', '2026-03-12 19:05:00'),
+(3, 2, 3498.00, 'SAUNA Wallet', 'completed', '2025-07-02 10:40:00'),
+(4, 3, 5998.00, 'SAUNA Wallet', 'completed', '2026-01-19 22:15:00'),
+(5, 4, 1479.00, 'SAUNA Wallet', 'completed', '2026-06-28 16:00:00'),
+(6, 5, 1100.00, 'SAUNA Wallet', 'completed', '2026-10-05 11:30:00'),
+(7, 6, 2399.20, 'SAUNA Wallet', 'completed', '2026-11-22 13:45:00');
 
 -- 7. WALLET_TRANSACTIONS
 INSERT INTO WALLET_TRANSACTIONS (txn_id, user_id, amount, txn_type, reference_order_id, created_at) VALUES
-(1, 1, 200.00, 'deposit', NULL, '2025-11-20 09:00:00'),
-(2, 1, -84.98, 'purchase', 1, '2025-11-25 14:20:00'),
-(3, 1, 30.48, 'deposit', NULL, '2026-05-01 12:00:00'),
-(4, 2, 82.00, 'deposit', NULL, '2025-06-15 08:30:00'),
-(5, 3, 330.23, 'deposit', NULL, '2026-01-10 17:00:00'),
-(6, 3, -119.98, 'purchase', 4, '2026-01-19 22:15:00'),
-(7, 4, 64.99, 'deposit', NULL, '2026-06-20 11:10:00'),
-(8, 4, -29.99, 'purchase', 5, '2026-06-28 16:00:00'),
-(9, 5, 50.00, 'deposit', NULL, '2026-09-01 15:00:00'),
-(10, 6, 167.99, 'deposit', NULL, '2026-11-18 10:00:00'),
-(11, 6, -47.99, 'purchase', 7, '2026-11-22 13:45:00');
+(1, 1, 8000.00, 'deposit', NULL, '2025-11-20 09:00:00'),
+(2, 1, -4699.00, 'purchase', 1, '2025-11-25 14:20:00'),
+(3, 1, 2500.00, 'deposit', NULL, '2026-05-01 12:00:00'),
+(4, 2, 4500.00, 'deposit', NULL, '2025-06-15 08:30:00'),
+(5, 3, 15000.00, 'deposit', NULL, '2026-01-10 17:00:00'),
+(6, 3, -5998.00, 'purchase', 4, '2026-01-19 22:15:00'),
+(7, 4, 3000.00, 'deposit', NULL, '2026-06-20 11:10:00'),
+(8, 4, -1479.00, 'purchase', 5, '2026-06-28 16:00:00'),
+(9, 5, 2500.00, 'deposit', NULL, '2026-09-01 15:00:00'),
+(10, 6, 7500.00, 'deposit', NULL, '2026-11-18 10:00:00'),
+(11, 6, -2399.20, 'purchase', 7, '2026-11-22 13:45:00');
 
 -- 8. ORDER_ITEMS
 INSERT INTO ORDER_ITEMS (order_item_id, order_id, game_id, price_at_purchase) VALUES
-(1, 1, 6, 59.99),
-(2, 1, 7, 24.99),
-(3, 2, 9, 14.99),
-(4, 3, 5, 19.99),
-(5, 3, 2, 59.99),
-(6, 4, 10, 59.99),
-(7, 4, 4, 59.99),
-(8, 5, 5, 19.99),
-(9, 5, 3, 9.99),
-(10, 6, 7, 24.99),
-(11, 7, 10, 47.99);
+(1, 1, 6, 3599.00),
+(2, 1, 7, 1100.00),
+(3, 2, 9, 690.00),
+(4, 3, 5, 999.00),
+(5, 3, 2, 2499.00),
+(6, 4, 10, 2999.00),
+(7, 4, 4, 2999.00),
+(8, 5, 5, 999.00),
+(9, 5, 3, 480.00),
+(10, 6, 7, 1100.00),
+(11, 7, 10, 2399.20);
 
 -- 9. USER_LIBRARY
 INSERT INTO USER_LIBRARY (user_id, game_id, acquired_at, playtime_minutes, last_played_at) VALUES
@@ -210,17 +234,15 @@ INSERT INTO GAME_TAGS (game_id, tag_id) VALUES
 (11, 3), (11, 10),
 (12, 1), (12, 4), (12, 9);
 
-
-
--- Re-sync identity sequences after explicit-ID inserts
-SELECT setval(pg_get_serial_sequence('publishers','publisher_id'), (SELECT COALESCE(MAX(publisher_id),0)+1 FROM publishers), false);
-SELECT setval(pg_get_serial_sequence('developers','developer_id'), (SELECT COALESCE(MAX(developer_id),0)+1 FROM developers), false);
-SELECT setval(pg_get_serial_sequence('games','game_id'), (SELECT COALESCE(MAX(game_id),0)+1 FROM games), false);
-SELECT setval(pg_get_serial_sequence('users','user_id'), (SELECT COALESCE(MAX(user_id),0)+1 FROM users), false);
-SELECT setval(pg_get_serial_sequence('orders','order_id'), (SELECT COALESCE(MAX(order_id),0)+1 FROM orders), false);
-SELECT setval(pg_get_serial_sequence('wallet_transactions','txn_id'), (SELECT COALESCE(MAX(txn_id),0)+1 FROM wallet_transactions), false);
-SELECT setval(pg_get_serial_sequence('order_items','order_item_id'), (SELECT COALESCE(MAX(order_item_id),0)+1 FROM order_items), false);
-SELECT setval(pg_get_serial_sequence('reviews','review_id'), (SELECT COALESCE(MAX(review_id),0)+1 FROM reviews), false);
-SELECT setval(pg_get_serial_sequence('sales','sale_id'), (SELECT COALESCE(MAX(sale_id),0)+1 FROM sales), false);
-SELECT setval(pg_get_serial_sequence('achievements','achievement_id'), (SELECT COALESCE(MAX(achievement_id),0)+1 FROM achievements), false);
-SELECT setval(pg_get_serial_sequence('tags','tag_id'), (SELECT COALESCE(MAX(tag_id),0)+1 FROM tags), false);
+-- Reset auto_increment counters cleanly
+ALTER TABLE PUBLISHERS AUTO_INCREMENT = 8;
+ALTER TABLE DEVELOPERS AUTO_INCREMENT = 9;
+ALTER TABLE GAMES AUTO_INCREMENT = 13;
+ALTER TABLE USERS AUTO_INCREMENT = 11;
+ALTER TABLE ORDERS AUTO_INCREMENT = 8;
+ALTER TABLE WALLET_TRANSACTIONS AUTO_INCREMENT = 12;
+ALTER TABLE ORDER_ITEMS AUTO_INCREMENT = 12;
+ALTER TABLE REVIEWS AUTO_INCREMENT = 10;
+ALTER TABLE SALES AUTO_INCREMENT = 4;
+ALTER TABLE ACHIEVEMENTS AUTO_INCREMENT = 13;
+ALTER TABLE TAGS AUTO_INCREMENT = 11;

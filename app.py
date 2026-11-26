@@ -4,24 +4,13 @@ from contextlib import contextmanager
 from decimal import Decimal
 from flask import Flask, jsonify, render_template, request, session
 from werkzeug.security import check_password_hash, generate_password_hash
-import psycopg2
-import psycopg2.errors
+import pymysql
 
 from db import get_connection, serialize_row, serialize_rows
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("FERRO_SECRET_KEY", "ferro-y-session-secret-2026")
-app.config.update(
-    SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SAMESITE="Lax",
-    SESSION_COOKIE_SECURE=os.environ.get("FERRO_COOKIE_SECURE") == "1",
-)
-
-# Member IDs allowed to use catalog-admin endpoints and the SQL explorer.
-ADMIN_USER_IDS = {
-    int(x) for x in os.environ.get("ADMIN_USER_IDS", "1").split(",") if x.strip().isdigit()
-}
-ENABLE_SQL_EXPLORER = os.environ.get("ENABLE_SQL_EXPLORER", "1") == "1"
+app.secret_key = os.environ.get("SAUNA_SECRET_KEY", "sauna-session-secret-2026")
+app.config["TEMPLATES_AUTO_RELOAD"] = True
 
 ALLOWED_TABLES = {
     "publishers",
@@ -66,19 +55,31 @@ def _error(message, status=400):
 def _require_auth(expected_user_id=None):
     uid = session.get("user_id")
     if not uid:
-        return None, _error("Please log in with your Member ID and password.", 401)
+        return None, _error("Please log in to continue.", 401)
     if expected_user_id is not None and int(uid) != int(expected_user_id):
-        return None, _error("Forbidden: you can only access your own member account.", 403)
+        return None, _error("Forbidden: you can only access your own account.", 403)
     return int(uid), None
 
 
+def _require_publisher():
+    uid = session.get("user_id")
+    role = session.get("role")
+    pub_id = session.get("publisher_id")
+    if not uid:
+        return None, None, _error("Please log in as a Publisher to continue.", 401)
+    if role != "publisher" or not pub_id:
+        return None, None, _error("Publisher account required for this action.", 403)
+    return int(uid), int(pub_id), None
+
+
 def _require_admin():
-    uid, err = _require_auth()
-    if err:
-        return None, err
-    if uid not in ADMIN_USER_IDS:
-        return None, _error("Admin access required.", 403)
-    return uid, None
+    uid = session.get("user_id")
+    role = session.get("role")
+    if not uid:
+        return None, _error("Platform Admin login required.", 401)
+    if role != "admin":
+        return None, _error("Forbidden: only Platform Admin can access Data Explorer.", 403)
+    return int(uid), None
 
 
 def _compute_effective_price(base_price, discount_pct):
@@ -91,35 +92,20 @@ def _compute_effective_price(base_price, discount_pct):
 
 def _active_discount_subquery():
     return """
-        SELECT DISTINCT ON (si.game_id)
-               si.game_id, si.discount_pct, s.title AS sale_title
-        FROM sale_items si
-        JOIN sales s ON s.sale_id = si.sale_id
+        SELECT si.game_id, MAX(si.discount_pct) AS discount_pct,
+               SUBSTRING_INDEX(GROUP_CONCAT(s.title ORDER BY si.discount_pct DESC SEPARATOR '||'), '||', 1) AS sale_title
+        FROM SALE_ITEMS si
+        JOIN SALES s ON s.sale_id = si.sale_id
         WHERE NOW() BETWEEN s.start_date AND s.end_date
-        ORDER BY si.game_id, si.discount_pct DESC
+        GROUP BY si.game_id
     """
 
 
-@app.errorhandler(psycopg2.Error)
-def handle_db_error(err):
-    diag = getattr(err, "diag", None)
-    msg = (diag.message_primary if diag and diag.message_primary else str(err)).strip()
-    if isinstance(err, psycopg2.errors.UniqueViolation):
-        msg = "That value already exists (duplicate)."
-    elif isinstance(err, psycopg2.errors.ForeignKeyViolation):
-        msg = "Referenced record does not exist or is still in use."
-    elif isinstance(err, psycopg2.errors.CheckViolation):
-        msg = "A value violates a data constraint."
-    status = 503 if isinstance(err, psycopg2.OperationalError) else 400
-    return jsonify({"error": f"Database error: {msg}"}), status
-
-
-@app.route("/healthz")
-def healthz():
-    with db_cursor() as (_, cur):
-        cur.execute("SELECT 1 AS ok")
-        cur.fetchone()
-    return jsonify({"status": "ok"})
+@app.errorhandler(pymysql.MySQLError)
+def handle_mysql_error(err):
+    code = err.args[0] if err.args else 500
+    msg = err.args[1] if len(err.args) > 1 else str(err)
+    return jsonify({"error": f"Database error ({code}): {msg}"}), 400
 
 
 @app.route("/")
@@ -128,32 +114,53 @@ def index():
 
 
 # ---------------------------------------------------------------------------
-# Authentication (Login / Register / Logout / Current Member)
+# Authentication (User & Publisher Login / Register / Logout)
 # ---------------------------------------------------------------------------
 @app.route("/api/auth/login", methods=["POST"])
 def auth_login():
     data = request.get_json(force=True) or {}
     identifier = str(data.get("identifier") or data.get("user_id") or "").strip()
     password = data.get("password") or ""
+    account_type = (data.get("account_type") or "user").strip().lower()
+    if account_type not in ("user", "publisher", "admin"):
+        return _error("Account type must be 'user', 'publisher', or 'admin'.")
     if not identifier or not password:
-        return _error("Member ID (or username) and password are required.")
+        return _error("Username (or Member ID) and password are required.")
 
     with db_cursor() as (_, cur):
+        base_sql = (
+            "SELECT u.*, p.name AS publisher_name FROM USERS u "
+            "LEFT JOIN PUBLISHERS p ON p.publisher_id = u.publisher_id "
+        )
         if identifier.isdigit():
-            cur.execute("SELECT * FROM USERS WHERE user_id = %s", (int(identifier),))
+            cur.execute(base_sql + "WHERE u.user_id = %s", (int(identifier),))
         else:
             cur.execute(
-                "SELECT * FROM USERS WHERE username = %s OR email = %s",
+                base_sql + "WHERE u.username = %s OR u.email = %s",
                 (identifier, identifier),
             )
         user = cur.fetchone()
         if not user or not check_password_hash(user["password_hash"], password):
-            return _error("Invalid Member ID or password.", 401)
+            return _error("Invalid credentials or password.", 401)
+
+        if user["role"] != account_type:
+            role_labels = {"user": "User", "publisher": "Publisher", "admin": "Platform Admin"}
+            expected_label = role_labels.get(user["role"], user["role"])
+            return _error(
+                f"This account is registered as {expected_label}. Please choose '{expected_label}' to log in.",
+                403,
+            )
 
         session["user_id"] = int(user["user_id"])
+        session["role"] = user["role"]
+        session["publisher_id"] = int(user["publisher_id"]) if user["publisher_id"] else None
         return jsonify({
             "authenticated": True,
             "user_id": int(user["user_id"]),
+            "username": user["username"],
+            "role": user["role"],
+            "publisher_id": session["publisher_id"],
+            "publisher_name": user["publisher_name"],
             "wallet_balance": float(user["wallet_balance"]),
             "country": user["country"],
         })
@@ -162,37 +169,71 @@ def auth_login():
 @app.route("/api/auth/register", methods=["POST"])
 def auth_register():
     data = request.get_json(force=True) or {}
+    account_type = (data.get("account_type") or "user").strip().lower()
+    if account_type not in ("user", "publisher"):
+        return _error("Account type must be 'user' or 'publisher'.")
+
     username = (data.get("username") or "").strip()
     email = (data.get("email") or "").strip()
     password = data.get("password") or ""
     country = (data.get("country") or "India").strip()
-    wallet = float(data.get("wallet_balance") or 0)
 
     if not username or not email or not password:
         return _error("Username, email, and password are required.")
     if len(password) < 4:
         return _error("Password must be at least 4 characters.")
-    if wallet < 0:
-        return _error("Initial wallet balance cannot be negative.")
 
     pw_hash = generate_password_hash(password)
     with db_cursor(commit=True) as (_, cur):
+        publisher_id = None
+        publisher_name = None
+        wallet = 0.0
+
+        if account_type == "publisher":
+            publisher_name = (data.get("publisher_name") or "").strip()
+            if not publisher_name:
+                return _error("Publisher / Studio Name is required for Publisher registration.")
+            founded_year = data.get("founded_year") or None
+            website = (data.get("website") or "").strip() or None
+            cur.execute("SELECT publisher_id, name FROM PUBLISHERS WHERE name = %s", (publisher_name,))
+            existing_pub = cur.fetchone()
+            if existing_pub:
+                publisher_id = int(existing_pub["publisher_id"])
+                publisher_name = existing_pub["name"]
+            else:
+                cur.execute(
+                    "INSERT INTO PUBLISHERS (name, country, founded_year, website) VALUES (%s, %s, %s, %s)",
+                    (publisher_name, country, founded_year, website),
+                )
+                publisher_id = cur.lastrowid
+        else:
+            wallet = float(data.get("wallet_balance") or 0)
+            if wallet < 0:
+                return _error("Initial wallet balance cannot be negative.")
+
         cur.execute(
-            "INSERT INTO USERS (username, email, password_hash, wallet_balance, country) "
-            "VALUES (%s, %s, %s, %s, %s) RETURNING user_id",
-            (username, email, pw_hash, wallet, country),
+            "INSERT INTO USERS (username, email, password_hash, role, publisher_id, wallet_balance, country) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            (username, email, pw_hash, account_type, publisher_id, wallet, country),
         )
-        user_id = cur.fetchone()["user_id"]
-        if wallet > 0:
+        user_id = cur.lastrowid
+        if account_type == "user" and wallet > 0:
             cur.execute(
                 "INSERT INTO WALLET_TRANSACTIONS (user_id, amount, txn_type, reference_order_id) "
                 "VALUES (%s, %s, 'deposit', NULL)",
                 (user_id, wallet),
             )
+
         session["user_id"] = int(user_id)
+        session["role"] = account_type
+        session["publisher_id"] = int(publisher_id) if publisher_id else None
         return jsonify({
             "authenticated": True,
             "user_id": int(user_id),
+            "username": username,
+            "role": account_type,
+            "publisher_id": session["publisher_id"],
+            "publisher_name": publisher_name,
             "wallet_balance": float(wallet),
             "country": country,
         }), 201
@@ -200,7 +241,7 @@ def auth_register():
 
 @app.route("/api/auth/logout", methods=["POST"])
 def auth_logout():
-    session.pop("user_id", None)
+    session.clear()
     return jsonify({"authenticated": False, "logged_out": True})
 
 
@@ -212,13 +253,19 @@ def auth_me():
 
     with db_cursor() as (_, cur):
         cur.execute(
-            "SELECT user_id, wallet_balance, country, created_at FROM USERS WHERE user_id = %s",
+            "SELECT u.user_id, u.username, u.role, u.publisher_id, p.name AS publisher_name, "
+            "u.wallet_balance, u.country, u.created_at "
+            "FROM USERS u LEFT JOIN PUBLISHERS p ON p.publisher_id = u.publisher_id "
+            "WHERE u.user_id = %s",
             (int(uid),),
         )
         user = cur.fetchone()
         if not user:
-            session.pop("user_id", None)
+            session.clear()
             return jsonify({"authenticated": False, "user": None})
+
+        session["role"] = user["role"]
+        session["publisher_id"] = int(user["publisher_id"]) if user["publisher_id"] else None
 
         cur.execute(
             "SELECT COUNT(*) AS owned_games, COALESCE(SUM(playtime_minutes), 0) AS total_playtime "
@@ -240,6 +287,29 @@ def auth_me():
         )
         ach = cur.fetchone()
 
+        published_games = 0
+        if user["role"] == "publisher" and user["publisher_id"]:
+            cur.execute(
+                "SELECT COUNT(*) AS cnt FROM GAMES WHERE publisher_id = %s",
+                (int(user["publisher_id"]),),
+            )
+            published_games = int(cur.fetchone()["cnt"])
+
+        admin_stats = {}
+        if user["role"] == "admin":
+            cur.execute("SELECT COUNT(*) AS cnt FROM USERS")
+            total_users = int(cur.fetchone()["cnt"])
+            cur.execute("SELECT COUNT(*) AS cnt FROM GAMES")
+            total_games = int(cur.fetchone()["cnt"])
+            cur.execute("SELECT COUNT(*) AS cnt FROM ORDERS")
+            total_orders = int(cur.fetchone()["cnt"])
+            admin_stats = {
+                "total_tables": len(ALLOWED_TABLES),
+                "total_users": total_users,
+                "total_games": total_games,
+                "total_orders": total_orders,
+            }
+
         return jsonify({
             "authenticated": True,
             "user": serialize_row(user),
@@ -249,6 +319,8 @@ def auth_me():
                 "wishlist_count": int(wish["wishlist_count"]),
                 "friend_count": int(friends["friend_count"]),
                 "unlocked_achievements": int(ach["unlocked_achievements"]),
+                "published_games": published_games,
+                **admin_stats,
             },
         })
 
@@ -279,7 +351,7 @@ def list_games():
     conditions = []
     params = []
     if q:
-        conditions.append("(g.title ILIKE %s OR g.description ILIKE %s)")
+        conditions.append("(g.title LIKE %s OR g.description LIKE %s)")
         like = f"%{q}%"
         params.extend([like, like])
     if tag_id:
@@ -313,7 +385,7 @@ def list_games():
         LEFT JOIN ({_active_discount_subquery()}) sd ON sd.game_id = g.game_id
         LEFT JOIN (
             SELECT game_id, COUNT(*) AS review_count,
-                   SUM(CASE WHEN is_recommended THEN 1 ELSE 0 END) AS positive_count
+                   SUM(CASE WHEN is_recommended = 1 THEN 1 ELSE 0 END) AS positive_count
             FROM REVIEWS
             GROUP BY game_id
         ) rev ON rev.game_id = g.game_id
@@ -426,19 +498,44 @@ def get_game_detail(game_id):
         return jsonify(game)
 
 
+@app.route("/api/publisher/games", methods=["GET"])
+def publisher_games():
+    _, pub_id, err = _require_publisher()
+    if err:
+        return err
+    with db_cursor() as (_, cur):
+        cur.execute(
+            f"""
+            SELECT g.*, d.name AS developer_name, sd.discount_pct, sd.sale_title,
+                   (SELECT COUNT(*) FROM USER_LIBRARY ul WHERE ul.game_id = g.game_id) AS owners_count,
+                   (SELECT COUNT(*) FROM ACHIEVEMENTS a WHERE a.game_id = g.game_id) AS achievement_count
+            FROM GAMES g
+            JOIN DEVELOPERS d ON d.developer_id = g.developer_id
+            LEFT JOIN ({_active_discount_subquery()}) sd ON sd.game_id = g.game_id
+            WHERE g.publisher_id = %s
+            ORDER BY g.game_id DESC
+            """,
+            (pub_id,),
+        )
+        rows = serialize_rows(cur.fetchall())
+        for r in rows:
+            r["discount_pct"] = int(r["discount_pct"]) if r["discount_pct"] else 0
+            r["effective_price"] = _compute_effective_price(r["base_price"], r["discount_pct"])
+        return jsonify(rows)
+
+
 @app.route("/api/games", methods=["POST"])
 def create_game():
-    _, err = _require_admin()
+    _, pub_id, err = _require_publisher()
     if err:
         return err
     data = request.get_json(force=True) or {}
     title = (data.get("title") or "").strip()
     if not title:
         return _error("Game title is required.")
-    publisher_id = data.get("publisher_id")
     developer_id = data.get("developer_id")
-    if not publisher_id or not developer_id:
-        return _error("Publisher and Developer are required.")
+    if not developer_id:
+        return _error("Developer is required.")
 
     base_price = float(data.get("base_price") or 0)
     if base_price < 0:
@@ -448,33 +545,33 @@ def create_game():
     with db_cursor(commit=True) as (_, cur):
         cur.execute(
             "INSERT INTO GAMES (title, description, release_date, base_price, publisher_id, developer_id, age_rating) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING game_id",
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
             (
                 title,
                 data.get("description") or "",
                 data.get("release_date") or None,
                 base_price,
-                int(publisher_id),
+                pub_id,
                 int(developer_id),
                 data.get("age_rating") or "Everyone",
             ),
         )
-        game_id = cur.fetchone()["game_id"]
+        game_id = cur.lastrowid
         for tid in tag_ids:
-            cur.execute("INSERT INTO GAME_TAGS (game_id, tag_id) VALUES (%s, %s) ON CONFLICT DO NOTHING", (game_id, int(tid)))
+            cur.execute("INSERT IGNORE INTO GAME_TAGS (game_id, tag_id) VALUES (%s, %s)", (game_id, int(tid)))
         cur.execute("SELECT * FROM GAMES WHERE game_id = %s", (game_id,))
         return jsonify(serialize_row(cur.fetchone())), 201
 
 
 @app.route("/api/games/<int:game_id>", methods=["DELETE"])
 def delete_game(game_id):
-    _, err = _require_admin()
+    _, pub_id, err = _require_publisher()
     if err:
         return err
     with db_cursor(commit=True) as (_, cur):
-        cur.execute("DELETE FROM GAMES WHERE game_id = %s", (game_id,))
+        cur.execute("DELETE FROM GAMES WHERE game_id = %s AND publisher_id = %s", (game_id, pub_id))
         if cur.rowcount == 0:
-            return _error("Game not found.", 404)
+            return _error("Game not found or belongs to another publisher.", 404)
         return jsonify({"deleted": game_id})
 
 
@@ -500,7 +597,7 @@ def user_library(user_id):
             JOIN PUBLISHERS p ON p.publisher_id = g.publisher_id
             JOIN DEVELOPERS d ON d.developer_id = g.developer_id
             WHERE ul.user_id = %s
-            ORDER BY ul.last_played_at DESC NULLS LAST, ul.acquired_at DESC
+            ORDER BY ul.last_played_at DESC, ul.acquired_at DESC
             """,
             (uid,),
         )
@@ -548,8 +645,8 @@ def unlock_achievement(user_id, achievement_id):
         if not cur.fetchone():
             return _error("User must own the game to unlock its achievements.")
         cur.execute(
-            "INSERT INTO USER_ACHIEVEMENTS (user_id, achievement_id, unlocked_at) "
-            "VALUES (%s, %s, NOW()) ON CONFLICT DO NOTHING",
+            "INSERT IGNORE INTO USER_ACHIEVEMENTS (user_id, achievement_id, unlocked_at) "
+            "VALUES (%s, %s, NOW())",
             (uid, achievement_id),
         )
         return jsonify({"unlocked": True, "achievement_id": achievement_id})
@@ -602,7 +699,7 @@ def add_wishlist(user_id):
         if cur.fetchone():
             return _error("You already own this game.")
         cur.execute(
-            "INSERT INTO WISHLIST (user_id, game_id, added_at) VALUES (%s, %s, NOW()) ON CONFLICT DO NOTHING",
+            "INSERT IGNORE INTO WISHLIST (user_id, game_id, added_at) VALUES (%s, %s, NOW())",
             (uid, int(game_id)),
         )
         return jsonify({"added": True, "game_id": int(game_id)}), 201
@@ -657,7 +754,7 @@ def checkout(user_id):
         return err
     data = request.get_json(force=True) or {}
     game_ids = [int(g) for g in (data.get("game_ids") or [])]
-    payment_method = (data.get("payment_method") or "FERRO Y Wallet").strip()
+    payment_method = (data.get("payment_method") or "SAUNA Wallet").strip()
     if not game_ids:
         return _error("Select at least one game to purchase.")
 
@@ -710,10 +807,10 @@ def checkout(user_id):
 
         cur.execute(
             "INSERT INTO ORDERS (user_id, total_amount, payment_method, status) "
-            "VALUES (%s, %s, %s, 'completed') RETURNING order_id",
-            (uid, total, "FERRO Y Wallet"),
+            "VALUES (%s, %s, %s, 'completed')",
+            (uid, total, "SAUNA Wallet"),
         )
-        order_id = cur.fetchone()["order_id"]
+        order_id = cur.lastrowid
 
         for gid, price in line_items:
             cur.execute(
@@ -811,10 +908,10 @@ def create_review(game_id):
             """
             INSERT INTO REVIEWS (user_id, game_id, is_recommended, review_text, playtime_at_review, helpful_votes)
             VALUES (%s, %s, %s, %s, %s, 0)
-            ON CONFLICT (user_id, game_id) DO UPDATE SET
-                is_recommended = EXCLUDED.is_recommended,
-                review_text = EXCLUDED.review_text,
-                playtime_at_review = EXCLUDED.playtime_at_review
+            ON DUPLICATE KEY UPDATE
+                is_recommended = VALUES(is_recommended),
+                review_text = VALUES(review_text),
+                playtime_at_review = VALUES(playtime_at_review)
             """,
             (uid, game_id, is_recommended, review_text, lib["playtime_minutes"]),
         )
@@ -963,7 +1060,7 @@ def get_meta():
 
 @app.route("/api/publishers", methods=["POST"])
 def create_publisher():
-    _, err = _require_admin()
+    _, _, err = _require_publisher()
     if err:
         return err
     data = request.get_json(force=True) or {}
@@ -972,15 +1069,15 @@ def create_publisher():
         return _error("Publisher name is required.")
     with db_cursor(commit=True) as (_, cur):
         cur.execute(
-            "INSERT INTO PUBLISHERS (name, country, founded_year, website) VALUES (%s, %s, %s, %s) RETURNING publisher_id",
+            "INSERT INTO PUBLISHERS (name, country, founded_year, website) VALUES (%s, %s, %s, %s)",
             (name, data.get("country"), data.get("founded_year") or None, data.get("website")),
         )
-        return jsonify({"publisher_id": cur.fetchone()["publisher_id"]}), 201
+        return jsonify({"publisher_id": cur.lastrowid}), 201
 
 
 @app.route("/api/developers", methods=["POST"])
 def create_developer():
-    _, err = _require_admin()
+    _, _, err = _require_publisher()
     if err:
         return err
     data = request.get_json(force=True) or {}
@@ -989,15 +1086,15 @@ def create_developer():
         return _error("Developer name is required.")
     with db_cursor(commit=True) as (_, cur):
         cur.execute(
-            "INSERT INTO DEVELOPERS (name, country, website) VALUES (%s, %s, %s) RETURNING developer_id",
+            "INSERT INTO DEVELOPERS (name, country, website) VALUES (%s, %s, %s)",
             (name, data.get("country"), data.get("website")),
         )
-        return jsonify({"developer_id": cur.fetchone()["developer_id"]}), 201
+        return jsonify({"developer_id": cur.lastrowid}), 201
 
 
 @app.route("/api/tags", methods=["POST"])
 def create_tag():
-    _, err = _require_admin()
+    _, _, err = _require_publisher()
     if err:
         return err
     data = request.get_json(force=True) or {}
@@ -1006,15 +1103,15 @@ def create_tag():
         return _error("Tag name is required.")
     with db_cursor(commit=True) as (_, cur):
         cur.execute(
-            "INSERT INTO TAGS (name, description) VALUES (%s, %s) RETURNING tag_id",
+            "INSERT INTO TAGS (name, description) VALUES (%s, %s)",
             (name, data.get("description") or ""),
         )
-        return jsonify({"tag_id": cur.fetchone()["tag_id"]}), 201
+        return jsonify({"tag_id": cur.lastrowid}), 201
 
 
 @app.route("/api/sales", methods=["POST"])
 def create_sale():
-    _, err = _require_admin()
+    _, _, err = _require_publisher()
     if err:
         return err
     data = request.get_json(force=True) or {}
@@ -1025,15 +1122,15 @@ def create_sale():
         return _error("Sale title, start_date, and end_date are required.")
     with db_cursor(commit=True) as (_, cur):
         cur.execute(
-            "INSERT INTO SALES (title, start_date, end_date) VALUES (%s, %s, %s) RETURNING sale_id",
+            "INSERT INTO SALES (title, start_date, end_date) VALUES (%s, %s, %s)",
             (title, start_date, end_date),
         )
-        return jsonify({"sale_id": cur.fetchone()["sale_id"]}), 201
+        return jsonify({"sale_id": cur.lastrowid}), 201
 
 
 @app.route("/api/sales/<int:sale_id>/items", methods=["POST"])
 def add_sale_item(sale_id):
-    _, err = _require_admin()
+    _, pub_id, err = _require_publisher()
     if err:
         return err
     data = request.get_json(force=True) or {}
@@ -1042,10 +1139,13 @@ def add_sale_item(sale_id):
     if not game_id or not (1 <= discount_pct <= 100):
         return _error("Valid game_id and discount_pct (1-100) are required.")
     with db_cursor(commit=True) as (_, cur):
+        cur.execute("SELECT 1 FROM GAMES WHERE game_id = %s AND publisher_id = %s", (int(game_id), pub_id))
+        if not cur.fetchone():
+            return _error("You can only discount games published by your studio.", 403)
         cur.execute(
             """
             INSERT INTO SALE_ITEMS (sale_id, game_id, discount_pct) VALUES (%s, %s, %s)
-            ON CONFLICT (sale_id, game_id) DO UPDATE SET discount_pct = EXCLUDED.discount_pct
+            ON DUPLICATE KEY UPDATE discount_pct = VALUES(discount_pct)
             """,
             (sale_id, int(game_id), discount_pct),
         )
@@ -1054,7 +1154,7 @@ def add_sale_item(sale_id):
 
 @app.route("/api/achievements", methods=["POST"])
 def create_achievement():
-    _, err = _require_admin()
+    _, pub_id, err = _require_publisher()
     if err:
         return err
     data = request.get_json(force=True) or {}
@@ -1063,80 +1163,74 @@ def create_achievement():
     if not game_id or not name:
         return _error("game_id and achievement name are required.")
     with db_cursor(commit=True) as (_, cur):
+        cur.execute("SELECT 1 FROM GAMES WHERE game_id = %s AND publisher_id = %s", (int(game_id), pub_id))
+        if not cur.fetchone():
+            return _error("You can only add achievements to games published by your studio.", 403)
         cur.execute(
-            "INSERT INTO ACHIEVEMENTS (game_id, name, description, is_hidden) VALUES (%s, %s, %s, %s) RETURNING achievement_id",
+            "INSERT INTO ACHIEVEMENTS (game_id, name, description, is_hidden) VALUES (%s, %s, %s, %s)",
             (int(game_id), name, data.get("description") or "", bool(data.get("is_hidden", False))),
         )
-        return jsonify({"achievement_id": cur.fetchone()["achievement_id"]}), 201
+        return jsonify({"achievement_id": cur.lastrowid}), 201
 
 
 # ---------------------------------------------------------------------------
-# Schema & Live SQL Explorer (All 17 ER Tables)
+# MySQL Schema & Live SQL Explorer (All 17 ER Tables)
 # ---------------------------------------------------------------------------
 @app.route("/api/db/tables", methods=["GET"])
 def list_db_tables():
+    _, err = _require_admin()
+    if err:
+        return err
     with db_cursor() as (_, cur):
         tables = []
-        for tbl in sorted(ALLOWED_TABLES):  # whitelisted names only
-            cur.execute(f"SELECT COUNT(*) AS cnt FROM {tbl}")
+        for tbl in sorted(ALLOWED_TABLES):
+            cur.execute(f"SELECT COUNT(*) AS cnt FROM `{tbl}`")
             cnt = cur.fetchone()["cnt"]
             cur.execute(
-                """
-                SELECT c.column_name,
-                       c.data_type AS column_type,
-                       CASE WHEN pk.column_name IS NOT NULL THEN 'PRI' ELSE '' END AS column_key,
-                       c.is_nullable
-                FROM information_schema.columns c
-                LEFT JOIN (
-                    SELECT kcu.column_name
-                    FROM information_schema.table_constraints tc
-                    JOIN information_schema.key_column_usage kcu
-                      ON kcu.constraint_name = tc.constraint_name
-                     AND kcu.table_schema = tc.table_schema
-                     AND kcu.table_name = tc.table_name
-                    WHERE tc.constraint_type = 'PRIMARY KEY'
-                      AND tc.table_schema = current_schema()
-                      AND tc.table_name = %s
-                ) pk ON pk.column_name = c.column_name
-                WHERE c.table_schema = current_schema() AND c.table_name = %s
-                ORDER BY c.ordinal_position
-                """,
-                (tbl, tbl),
+                "SELECT COLUMN_NAME AS column_name, COLUMN_TYPE AS column_type, "
+                "COLUMN_KEY AS column_key, IS_NULLABLE AS is_nullable "
+                "FROM information_schema.columns "
+                "WHERE table_schema = DATABASE() AND table_name = %s "
+                "ORDER BY ordinal_position",
+                (tbl,),
             )
             cols = serialize_rows(cur.fetchall())
             tables.append({"table_name": tbl.upper(), "row_count": int(cnt), "columns": cols})
         return jsonify(tables)
 
 
+def _mask_admin_rows(rows, mask_txn_amount=False):
+    masked_cols = {"password_hash", "wallet_balance"}
+    if mask_txn_amount:
+        masked_cols.add("amount")
+    for r in rows:
+        for col in list(r.keys()):
+            if col.lower() in masked_cols:
+                r[col] = "********"
+    return rows
+
+
 @app.route("/api/db/tables/<table_name>", methods=["GET"])
 def inspect_table(table_name):
+    _, err = _require_admin()
+    if err:
+        return err
     tbl = table_name.lower()
     if tbl not in ALLOWED_TABLES:
         return _error("Unknown table name.", 404)
-    limit = max(1, min(request.args.get("limit", 100, type=int), 500))
+    limit = min(int(request.args.get("limit", 100)), 500)
     with db_cursor() as (_, cur):
-        cur.execute(f"SELECT * FROM {tbl} LIMIT %s", (limit,))
-        rows = serialize_rows(cur.fetchall())
-        if tbl == "users":
-            for r in rows:
-                if "password_hash" in r:
-                    r["password_hash"] = "********"
+        cur.execute(f"SELECT * FROM `{tbl}` LIMIT %s", (limit,))
+        rows = _mask_admin_rows(
+            serialize_rows(cur.fetchall()),
+            mask_txn_amount=(tbl == "wallet_transactions"),
+        )
         cols = [d[0] for d in cur.description] if cur.description else []
         return jsonify({"table_name": tbl.upper(), "columns": cols, "rows": rows})
 
 
-_BLOCKED_SQL = re.compile(
-    r"password_hash|\bpg_(read|ls|stat|sleep|terminate|cancel|reload|file|logical|"
-    r"create|drop|advisory)\w*|\blo_(import|export|get|put)\w*|\bdblink\w*|"
-    r"\bcopy\b|\bset_config\b|\bcurrent_setting\b",
-    re.I,
-)
-
-
 @app.route("/api/db/query", methods=["POST"])
 def run_readonly_query():
-    if not ENABLE_SQL_EXPLORER:
-        return _error("SQL Explorer is disabled on this deployment.", 403)
     _, err = _require_admin()
     if err:
         return err
@@ -1146,29 +1240,22 @@ def run_readonly_query():
         return _error("SQL query cannot be empty.")
     stripped = re.sub(r"^\s*(--[^\n]*\n|/\*.*?\*/\s*)*", "", sql, flags=re.S).strip()
     first_kw = stripped.split(None, 1)[0].upper() if stripped else ""
-    if first_kw not in ("SELECT", "EXPLAIN", "WITH", "TABLE", "VALUES"):
-        return _error("SQL Explorer only allows read-only queries (SELECT, WITH, EXPLAIN).")
-    if re.match(r"EXPLAIN\s+(\(.*?\)\s*)?ANALY[SZ]E", stripped, re.I):
-        return _error("EXPLAIN ANALYZE is not allowed.")
-    if _BLOCKED_SQL.search(stripped):
-        return _error("This query touches restricted data or functions.", 403)
-    body = stripped.rstrip().rstrip(";")
-    if ";" in body:
+    if first_kw not in ("SELECT", "SHOW", "DESCRIBE", "DESC", "EXPLAIN", "WITH"):
+        return _error("SQL Explorer only allows read-only queries (SELECT, SHOW, DESCRIBE, EXPLAIN, WITH).")
+    if ";" in stripped[:-1]:
         return _error("Only a single SQL statement is allowed per query.")
+    if re.search(r"\b(wallet_balance|password_hash)\b", stripped, flags=re.I):
+        return _error("Wallet balance and password hash are masked for Platform Admin.", 403)
 
-    conn = get_connection()
-    try:
-        # Enforced by PostgreSQL itself: no write can succeed, even via CTEs.
-        conn.set_session(readonly=True)
-        with conn.cursor() as cur:
-            cur.execute("SET LOCAL statement_timeout = 5000")
-            cur.execute(body)
-            rows = serialize_rows(cur.fetchmany(200))
-            cols = [d[0] for d in cur.description] if cur.description else []
+    with db_cursor() as (_, cur):
+        cur.execute(stripped)
+        mentions_wallet_txn = bool(re.search(r"\bwallet_transactions\b", stripped, flags=re.I))
+        rows = _mask_admin_rows(
+            serialize_rows(cur.fetchmany(200)),
+            mask_txn_amount=mentions_wallet_txn,
+        )
+        cols = [d[0] for d in cur.description] if cur.description else []
         return jsonify({"columns": cols, "rows": rows, "row_count": len(rows)})
-    finally:
-        conn.rollback()
-        conn.close()
 
 
 if __name__ == "__main__":
