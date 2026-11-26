@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/static/css/style.css" />
 </head>
 <body>
+  <div class="snow" aria-hidden="true"></div>
   <header class="topbar">
     <div class="topbar-inner">
       <div class="brand">
@@ -54,6 +55,21 @@
 
     <!-- STORE TAB -->
     <section id="tab-store" class="tab-panel active">
+      <div id="xmasBanner" class="xmas-banner hidden">
+        <div>
+          <span class="xmas-kicker">Early holiday offer</span>
+          <h2 id="xmasTitle">Christmas Sale</h2>
+          <p id="xmasSubtitle"></p>
+          <button class="btn xmas-cta" onclick="showChristmasDeals()">Shop Christmas deals</button>
+        </div>
+        <div class="xmas-countdown" aria-label="Time left in the sale">
+          <div><strong id="xmasDays">00</strong><span>Days</span></div>
+          <div><strong id="xmasHours">00</strong><span>Hours</span></div>
+          <div><strong id="xmasMins">00</strong><span>Mins</span></div>
+          <div><strong id="xmasSecs">00</strong><span>Secs</span></div>
+        </div>
+      </div>
+
       <div class="hero-banner">
         <div>
           <h1>SAUNA Featured &amp; On Sale</h1>

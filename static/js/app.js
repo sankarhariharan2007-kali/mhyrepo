@@ -13,7 +13,26 @@ const state = {
   selectedDbTable: "GAMES",
 };
 
+// Banners for games added later are matched by title, because their IDs can vary.
+const TITLE_BANNERS = {
+  "Red Dead Redemption 2": "red-dead-redemption-2",
+  "Black Myth: Wukong": "black-myth-wukong",
+  "Hollow Knight: Silksong": "hollow-knight-silksong",
+  "Clair Obscur: Expedition 33": "clair-obscur",
+  "Split Fiction": "split-fiction",
+  "Kingdom Come: Deliverance II": "kingdom-come-2",
+  "Resident Evil Requiem": "resident-evil-requiem",
+  "Forza Horizon 6": "forza-horizon-6",
+  "Stardew Valley": "stardew-valley",
+  "Terraria": "terraria",
+  "Palworld": "palworld",
+  "Mount & Blade II: Bannerlord": "bannerlord",
+};
+
 function gameBannerUrl(gameId, title = "") {
+  if (Object.prototype.hasOwnProperty.call(TITLE_BANNERS, title)) {
+    return `/static/banners/${TITLE_BANNERS[title]}.svg`;
+  }
   const id = Number(gameId || 0);
   if (id >= 1 && id <= 12) {
     return `/static/banners/game_${id}.svg`;
@@ -272,6 +291,50 @@ async function loadMeta() {
   document.getElementById("activeSaleBanner").textContent = activeSales.length
     ? `Active Event: ${activeSales.map((s) => s.title).join(", ")} — Seasonal discounts live now!`
     : "Browse the SAUNA catalog, build your library, or sign in as a Publisher to release titles.";
+  applyChristmasTheme(activeSales);
+}
+
+// ---------------------------------------------------------------------------
+// Christmas theme: on only while a sale with "Christmas" in its title is active
+// ---------------------------------------------------------------------------
+let xmasTimer = null;
+
+function applyChristmasTheme(activeSales) {
+  const sale = activeSales.find((s) => /christmas/i.test(s.title));
+  const banner = document.getElementById("xmasBanner");
+  document.body.classList.toggle("xmas", Boolean(sale));
+  banner.classList.toggle("hidden", !sale);
+  clearInterval(xmasTimer);
+  if (!sale) return;
+
+  const pcts = state.meta.sale_items.filter((i) => i.sale_id === sale.sale_id).map((i) => i.discount_pct);
+  document.getElementById("xmasTitle").textContent = sale.title;
+  document.getElementById("xmasSubtitle").textContent = pcts.length
+    ? `Christmas came early: up to ${Math.max(...pcts)}% off.`
+    : "Christmas came early.";
+
+  // The database stores sale times in UTC without a zone marker.
+  const end = new Date(`${sale.end_date.replace(" ", "T")}Z`).getTime();
+  const tick = () => {
+    const left = Math.max(0, Math.floor((end - Date.now()) / 1000));
+    const parts = [Math.floor(left / 86400), Math.floor(left / 3600) % 24, Math.floor(left / 60) % 60, left % 60];
+    ["xmasDays", "xmasHours", "xmasMins", "xmasSecs"].forEach((id, i) => {
+      document.getElementById(id).textContent = String(parts[i]).padStart(2, "0");
+    });
+    if (left === 0) {
+      clearInterval(xmasTimer);
+      document.body.classList.remove("xmas");
+      banner.classList.add("hidden");
+    }
+  };
+  tick();
+  xmasTimer = setInterval(tick, 1000);
+}
+
+function showChristmasDeals() {
+  document.getElementById("filterOnSale").checked = true;
+  state.spotlightIdx = 0;
+  loadGames().then(() => document.getElementById("gamesGrid").scrollIntoView({ behavior: "smooth" }));
 }
 
 async function loadGames() {

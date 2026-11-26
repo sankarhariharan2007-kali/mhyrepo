@@ -18,6 +18,7 @@ TABLES = (
     "order_items, user_library, reviews, wishlist, sales, sale_items, achievements, "
     "user_achievements, tags, game_tags"
 )
+HOLIDAY_SALE = "SAUNA Early Christmas Sale 2026"
 
 
 def run_file(cur, name):
@@ -31,6 +32,18 @@ def has_old_demo_data(cur):
         "AND NOT EXISTS (SELECT 1 FROM users WHERE role = 'admin') AS old"
     )
     return cur.fetchone()["old"]
+
+
+def apply_holiday_update(cur):
+    """Add the holiday 2026 games, prices and sale to demo databases, once."""
+    cur.execute(
+        "SELECT EXISTS (SELECT 1 FROM users WHERE email = 'admin@sauna.io') "
+        "AND NOT EXISTS (SELECT 1 FROM sales WHERE title = %s) AS due",
+        (HOLIDAY_SALE,),
+    )
+    if cur.fetchone()["due"]:
+        run_file(cur, "03_holiday_2026.sql")
+        print("holiday 2026 update applied")
 
 
 def main():
@@ -58,6 +71,7 @@ def main():
                     )
             else:
                 print("seed skipped (users exist or SEED_DEMO_DATA=0)")
+            apply_holiday_update(cur)
         conn.commit()
     finally:
         conn.close()
