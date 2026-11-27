@@ -41,6 +41,7 @@ const TITLE_BANNERS = {
   "Terraria": "terraria",
   "Palworld": "palworld",
   "Mount & Blade II: Bannerlord": "bannerlord",
+  "F1 25": "f1-25",
 };
 
 function gameBannerUrl(gameId, title = "") {

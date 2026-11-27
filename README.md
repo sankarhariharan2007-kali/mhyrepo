@@ -28,6 +28,9 @@ Choosing **UPI** in the cart (amount always shown in INR) shows [`static/images/
 ## Holiday 2026 update
 [`sql/03_holiday_2026.sql`](sql/03_holiday_2026.sql) is applied once on boot to a database holding the demo data. It sets regular rupee prices (looked up 26 November 2026; they do not update by themselves), adds 12 games (24 in all) and starts the **Early Christmas Sale** (26 November to 31 December 2026, IST). The Christmas theme shows only while a sale with "Christmas" in its title is active.
 
+## Season End Sale: F1 25
+[`sql/05_f1_season_end_sale.sql`](sql/05_f1_season_end_sale.sql) is applied once on boot, after the holiday update. It adds **F1 25** (₹4,999) and the **SAUNA Season End Sale 2026**, 27 November to 31 December 2026 (IST), which gives **85% off F1 25 only**. The price does not update by itself.
+
 ## Running locally
 ```bash
 pip install -r requirements.txt
